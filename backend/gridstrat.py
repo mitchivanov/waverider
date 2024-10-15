@@ -53,8 +53,10 @@ class GridStrategy:
             tasks = []
             for i in range(0, len(levels), batch_size):
                 for level in levels[i:i + batch_size]:
+                    # Determine the order size based on the order type
+                    order_size = self.buy_order_size if order_type == 'buy' else self.sell_order_size
                     # Create a task to place each limit order
-                    tasks.append(self.place_limit_order(level, order_type))
+                    tasks.append(self.place_limit_order(level, order_type, order_size))
             # Execute all the tasks concurrently
             await asyncio.gather(*tasks)
             await asyncio.sleep(2)  # Pause between batches to avoid rate limits
@@ -99,8 +101,9 @@ class GridStrategy:
                     # Log the current price and deviation
                     logging.info(f"Current price: {current_price:.2f}, Current deviation: {deviation:.2%}")
 
-                    # Check if the current price matches any buy or sell level and place an opposite order
-                    if current_price in self.grid_levels['buy']:
+                    # Check if the current price has crossed any buy levels
+                    buy_levels_crossed = [level for level in self.grid_levels['buy'] if current_price <= level]
+                    for buy_level in buy_levels_crossed:
                         logging.info(f"Buy level reached at price: {current_price:.2f}")
                         # Buy order filled, evaluate profitability for placing a corresponding sell order
                         if self.only_profitable_trades:
@@ -110,7 +113,7 @@ class GridStrategy:
                                 logging.info(f"Skipping sell order at {current_price} as it is not profitable.")
                                 continue
                         # Place a new sell order above the current price
-                        new_sell_level = current_price + ((self.deviation_threshold / self.grids) * self.initial_price)
+                        new_sell_level = buy_level + ((self.deviation_threshold / self.grids) * self.initial_price)
                         self.grid_levels['sell'].append(new_sell_level)
                         await self.place_limit_order(new_sell_level, 'SELL', self.sell_order_size)
                         # Track the sell position
@@ -118,8 +121,11 @@ class GridStrategy:
                         # Adjust available funds for Asset B
                         self.asset_b_funds -= self.sell_order_size
                         # Remove the filled buy level from grid levels
-                        self.grid_levels['buy'].remove(current_price)
-                    elif current_price in self.grid_levels['sell']:
+                        self.grid_levels['buy'].remove(buy_level)
+
+                    # Check if the current price has crossed any sell levels
+                    sell_levels_crossed = [level for level in self.grid_levels['sell'] if current_price >= level]
+                    for sell_level in sell_levels_crossed:
                         logging.info(f"Sell level reached at price: {current_price:.2f}")
                         # Sell order filled, evaluate profitability for placing a corresponding buy order
                         if self.only_profitable_trades:
@@ -129,7 +135,7 @@ class GridStrategy:
                                 logging.info(f"Skipping buy order at {current_price} as it is not profitable.")
                                 continue
                         # Place a new buy order below the current price
-                        new_buy_level = current_price - ((self.deviation_threshold / self.grids) * self.initial_price)
+                        new_buy_level = sell_level - ((self.deviation_threshold / self.grids) * self.initial_price)
                         self.grid_levels['buy'].append(new_buy_level)
                         await self.place_limit_order(new_buy_level, 'BUY', self.buy_order_size)
                         # Track the buy position
@@ -137,10 +143,10 @@ class GridStrategy:
                         # Adjust available funds for Asset A
                         self.asset_a_funds -= new_buy_level * self.buy_order_size
                         # Remove the filled sell level from grid levels
-                        self.grid_levels['sell'].remove(current_price)
+                        self.grid_levels['sell'].remove(sell_level)
 
                     # Reset grid if deviation threshold is reached
-                    elif abs(deviation) >= self.deviation_threshold:
+                    if abs(deviation) >= self.deviation_threshold:
                         logging.info("Deviation threshold reached. Resetting grid.")
                         # Carry forward weighted average and positions after reset
                         self.buy_positions = [{'price': buy['price'], 'quantity': buy['quantity']} for buy in self.buy_positions]
@@ -185,3 +191,4 @@ async def main():
     # Define trading parameters
     symbol = "BTCUSDT"
     asset_a_funds = 1000
+

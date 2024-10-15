@@ -1,6 +1,7 @@
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceRequestException
 from root import settings
+import aiohttp
 
 class BinanceClient:
     def __init__(self):
@@ -36,3 +37,35 @@ class BinanceClient:
         except (BinanceAPIException, BinanceRequestException) as e:
             print(f"An error occurred while placing an order: {str(e)}")
             return None
+
+    async def place_order_async(self, symbol: str, side: str, quantity: float, price: float, order_type: str = 'LIMIT'):
+        """Place an order on Binance asynchronously."""
+        async with aiohttp.ClientSession() as session:
+            try:
+                # Example API call to place an order
+                url = "https://api.binance.com/api/v3/order"
+                params = {
+                    "symbol": symbol,
+                    "side": side,
+                    "type": order_type,
+                    "quantity": quantity,
+                    "price": price,
+                    # Add other necessary parameters
+                }
+                async with session.post(url, params=params) as response:
+                    return await response.json()
+            except (BinanceAPIException, BinanceRequestException) as e:
+                print(f"An error occurred while placing an order: {str(e)}")
+                return None
+
+    async def get_current_price_async(self, symbol: str) -> float:
+        """Fetch the current price for a given trading pair asynchronously."""
+        async with aiohttp.ClientSession() as session:
+            try:
+                url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
+                async with session.get(url) as response:
+                    data = await response.json()
+                    return float(data['price'])
+            except (BinanceAPIException, BinanceRequestException) as e:
+                print(f"An error occurred while fetching the current price from Binance: {str(e)}")
+                return None
