@@ -23,6 +23,8 @@ async def main():
     asset_b_funds = 0.5  # Example funds in BTC (Asset B)
     grids = 10  # Number of grid levels
     deviation_threshold = 0.004  # 0.02 is 2% deviation
+    growth_factor = 0.5  # Example growth factor
+    use_granular_distribution = True  # Use granular distribution
     trail_price = True  # Whether to trail the price or not
     only_profitable_trades = False  # Whether to only execute profitable trades
 
@@ -33,6 +35,8 @@ async def main():
         asset_b_funds=asset_b_funds,
         grids=grids,
         deviation_threshold=deviation_threshold,
+        growth_factor=growth_factor,  # Pass the growth factor
+        use_granular_distribution=use_granular_distribution,  # Pass the granular distribution flag
         trail_price=trail_price,
         only_profitable_trades=only_profitable_trades
     )

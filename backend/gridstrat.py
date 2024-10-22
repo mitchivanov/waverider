@@ -32,11 +32,11 @@ class GridStrategy:
         asset_b_funds,
         grids,
         deviation_threshold,
+        growth_factor,  # User-defined growth factor
+        use_granular_distribution,  # User-defined flag for granular distribution
         trail_price=True,
         only_profitable_trades=False
     ):
-      
-
         # Securely retrieve API credentials from environment variables
         api_key = os.getenv('BINANCE_API_KEY')
         api_secret = os.getenv('BINANCE_API_SECRET')
@@ -69,6 +69,8 @@ class GridStrategy:
         self.stop_flag = False  # Initialize the stop flag
         self.active_orders = []  # List to store active orders
         self.trade_history = []  # List to store completed trades
+        self.growth_factor = growth_factor  # Store the growth factor
+        self.use_granular_distribution = use_granular_distribution  # Store the flag for granular distribution
 
         # Check account balance
         self.check_account_balance()
@@ -112,58 +114,50 @@ class GridStrategy:
             logging.info("WebSocket connection closed.")
 
     async def calculate_order_size(self):
-        """Calculate the order sizes separately for buy and sell orders."""
-
+        """Calculate the order sizes using linear distribution with a growth factor."""
         # Ensure current price is available
         if self.current_price is None:
             ticker = self.binance_client.client.get_ticker(symbol=self.symbol)
             self.current_price = float(ticker['lastPrice'])
 
-        # **Calculate Buy Order Sizes**
-        # Allocate total funds for buying (quote asset, e.g., USDT)
-        total_buy_funds = self.asset_a_funds  # Total USDT allocated for buying
-        buy_funds_per_grid = total_buy_funds / self.grids  # USDT per buy order
-        
-        # Debug logging
-        logging.debug(f"Total buy funds: {total_buy_funds} USDT")
-        logging.debug(f"Number of grids: {self.grids}")
-        logging.debug(f"Buy funds per grid: {buy_funds_per_grid} USDT")
-        
-        # Sanity check
-        if buy_funds_per_grid <= 0:
-            logging.error(f"Invalid buy funds per grid: {buy_funds_per_grid}. Check asset_a_funds and grids values.")
-            raise ValueError("Buy funds per grid must be positive.")
+        if self.use_granular_distribution:
+            # Calculate buy order sizes using linear distribution
+            total_buy_funds = self.asset_a_funds
+            x1 = total_buy_funds / (self.grids + (self.growth_factor * (self.grids * (self.grids - 1)) / 2))
+            self.buy_order_sizes = [
+                (x1 + self.growth_factor * i * x1) / self.current_price  # <-- Change: Division by current_price
+                for i in range(self.grids)
+            ]
 
-        # Calculate buy order sizes for each grid level
-        # Check if grid_levels is empty or not
-        if not self.grid_levels or not self.grid_levels.get('buy'):
-            logging.error("Grid levels are empty. Cannot calculate buy order sizes.")
-            raise ValueError("Grid levels are not properly initialized.")
-        
-        logging.debug(f"Grid levels for buying: {self.grid_levels['buy']}")
-        self.buy_order_sizes = []
-        for i, price in enumerate(self.grid_levels['buy']):
-            order_size = buy_funds_per_grid / price  # BTC quantity at grid level price
-            self.buy_order_sizes.append(order_size)
-            logging.debug(f"Buy order {i+1}: Price = {price:.2f}, Size = {order_size:.8f} BTC")
-        
-        # Sanity check
-        if not self.buy_order_sizes:
-            logging.error("No buy order sizes calculated. Check if grid_levels['buy'] is empty.")
-        elif any(size <= 0 for size in self.buy_order_sizes):
-            logging.error(f"Invalid buy order sizes: {self.buy_order_sizes}. Check for division by zero or negative prices.")
-        
-        total_btc = sum(self.buy_order_sizes)
-        logging.info(f"Total BTC to be bought: {total_btc:.8f}")
-        logging.info(f"Total USDT allocated: {total_btc * self.current_price:.2f}")
+            # Debug logging for buy order sizes
+            logging.debug(f"Total buy funds: {total_buy_funds} USDT")
+            logging.debug(f"Growth factor: {self.growth_factor}")
+            logging.debug(f"Initial buy order size (x1): {x1}")
 
-        # **Calculate Sell Order Size**
-        # Allocate total quantity for selling (base asset, e.g., BTC)
-        total_sell_quantity = self.asset_b_funds  # Total BTC allocated for selling
-        sell_quantity_per_grid = total_sell_quantity / self.grids  # BTC per sell order
+            # Calculate sell order sizes using linear distribution
+            total_sell_quantity = self.asset_b_funds
+            x1_sell = total_sell_quantity / (self.grids + (self.growth_factor * (self.grids * (self.grids - 1)) / 2))
+            self.sell_order_sizes = [x1_sell + self.growth_factor * i * x1_sell for i in range(self.grids)]
 
-        # Create a list for sell order sizes (same size for each grid level)
-        self.sell_order_sizes = [sell_quantity_per_grid] * len(self.grid_levels['sell'])
+            # Debug logging for sell order sizes
+            logging.debug(f"Total sell quantity: {total_sell_quantity} BTC")
+            logging.debug(f"Initial sell order size (x1_sell): {x1_sell}")
+        else:
+            # Calculate buy order sizes (equal distribution)
+            total_buy_funds = self.asset_a_funds
+            buy_funds_per_grid = total_buy_funds / self.grids
+            self.buy_order_sizes = [buy_funds_per_grid / price for price in self.grid_levels['buy']]
+
+            # Debug logging for equal distribution
+            logging.debug(f"Buy funds per grid: {buy_funds_per_grid} USDT")
+
+            # Calculate sell order sizes (equal distribution)
+            total_sell_quantity = self.asset_b_funds
+            sell_quantity_per_grid = total_sell_quantity / self.grids
+            self.sell_order_sizes = [sell_quantity_per_grid] * len(self.grid_levels['sell'])
+
+            # Debug logging for equal distribution
+            logging.debug(f"Sell quantity per grid: {sell_quantity_per_grid} BTC")
 
         logging.info("Calculated order sizes for each grid level.")
         for i, price in enumerate(self.grid_levels['buy']):
@@ -554,6 +548,9 @@ class GridStrategy:
                 logging.error(f"Insufficient {base_asset} balance. Required: {required_quantity}, Available: {available_quantity}")
                 return False
         return True
+
+
+
 
 
 
