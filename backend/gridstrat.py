@@ -182,8 +182,18 @@ class GridStrategy:
 
     async def send_update(self, update_info):
         """Send an update about the order status."""
-        # Example implementation: log the update
+        # Log the update
         logging.info(f"Update: {update_info}")
+
+        # Send the update to the WebSocket group
+        channel_layer = get_channel_layer()
+        await channel_layer.group_send(
+            'bot_updates',
+            {
+                'type': 'bot_update',
+                'message': update_info
+            }
+        )
 
     async def place_limit_order(self, price, order_type, order_size):
         """Place an individual limit order and log the outcome."""
@@ -548,6 +558,7 @@ class GridStrategy:
                 logging.error(f"Insufficient {base_asset} balance. Required: {required_quantity}, Available: {available_quantity}")
                 return False
         return True
+
 
 
 
