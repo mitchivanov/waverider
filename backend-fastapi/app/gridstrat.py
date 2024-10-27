@@ -1,21 +1,29 @@
 import asyncio
 import logging
-from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
+from fastapi import WebSocket
 from binance_client import BinanceClient
-from root import settings
 import aiohttp
 from asyncio_throttle import Throttler
-from binance_websocket import BinanceWebSocket  # Import the WebSocket class
+from binance_websocket import BinanceWebSocket
 import os
 import decimal
-import time  # Import the time module
+import time
+from typing import List, Dict, Optional
+from sqlalchemy import delete
+import datetime
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import declarative_base
+from sqlalchemy.future import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from database import async_session
+from models.models import TradeHistory, ActiveOrder
+from sqlalchemy import update
 
 # Configure logging for the entire application
 logging.basicConfig(
-    level=logging.INFO,  # Set the default logging level to INFO
+    level=logging.DEBUG,  # Set the default logging level to INFO
     format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='grid_trading.log'
+    filename='debug.log'
 )
 
 # Suppress debug messages from the websockets library
@@ -35,12 +43,13 @@ class GridStrategy:
         growth_factor,  # User-defined growth factor
         use_granular_distribution,  # User-defined flag for granular distribution
         trail_price=True,
-        only_profitable_trades=False
+        only_profitable_trades=False,
     ):
         # Securely retrieve API credentials from environment variables
-        api_key = os.getenv('BINANCE_API_KEY')
-        api_secret = os.getenv('BINANCE_API_SECRET')
-
+        
+        api_key = 'hsKMdfXQ1yLis77mvU4byyGqg6999COtK2HC4BAOp59xu0YCj7YIXoymsdhlX2Uq'
+        api_secret = 'nBT901qAYhwjmPWPHCDcmey80Tu9gVhAfT8pAREy2MetF3jYChBdSgZXbhxCQO75'
+        
         # Ensure the API key and secret are strings
         if not isinstance(api_key, str) or not isinstance(api_secret, str):
             raise ValueError("API key and secret must be strings")
@@ -62,7 +71,8 @@ class GridStrategy:
         self.unrealized_profit_a = 0
         self.unrealized_profit_b = 0
         self.only_profitable_trades = only_profitable_trades
-        self.session = aiohttp.ClientSession
+
+        self.session = None
         self.throttler = Throttler(rate_limit=5, period=1)
         self.current_price = None  # Initialize current price
         self.websocket = BinanceWebSocket(self.symbol)  # Initialize the WebSocket
@@ -72,8 +82,13 @@ class GridStrategy:
         self.growth_factor = growth_factor  # Store the growth factor
         self.use_granular_distribution = use_granular_distribution  # Store the flag for granular distribution
 
+        self.active_connections: List[WebSocket] = []
+
         # Check account balance
         self.check_account_balance()
+
+        # После существующих инициализаций
+        self.start_time = datetime.datetime.now()
 
     def check_account_balance(self):
         """Check if the account balance is sufficient for the assigned funds."""
@@ -181,19 +196,14 @@ class GridStrategy:
         logging.info(f"Sell levels: {self.grid_levels['sell']}")
 
     async def send_update(self, update_info):
-        """Send an update about the order status."""
-        # Log the update
+        """Отправляет обновления через WebSocket."""
         logging.info(f"Update: {update_info}")
-
-        # Send the update to the WebSocket group
-        channel_layer = get_channel_layer()
-        await channel_layer.group_send(
-            'bot_updates',
-            {
-                'type': 'bot_update',
-                'message': update_info
-            }
-        )
+        
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(update_info)
+            except Exception as e:
+                logging.error(f"Ошибка отправки обновления: {e}")
 
     async def place_limit_order(self, price, order_type, order_size):
         """Place an individual limit order and log the outcome."""
@@ -260,16 +270,8 @@ class GridStrategy:
                 order = await self.binance_client.place_order_async(
                     self.symbol, order_type.upper(), order_size, price
                 )
-                # logging.debug("Order placed, checking response...")
-
-                # Remove or comment out these debug logs
-                # logging.debug(f"Params: {params}")
-                # logging.debug(f"Headers: {headers}")
-                # logging.info(f"Order response: {order}")
-                # Check if the order was successful and log the result
+                
                 if 'orderId' in order:
-                    # message = f"Successfully placed {order_type.upper()} limit order at ${price} for {order_size} units."
-                    # logging.info(message)
                     # Update positions and active orders
                     if order_type.lower() == 'buy':
                         self.buy_positions.append({'price': price, 'quantity': order_size})
@@ -277,18 +279,25 @@ class GridStrategy:
                         self.sell_positions.append({'price': price, 'quantity': order_size})
 
                     order_id = order['orderId']
+                    
+                    order_data = {
+                        'order_id': order_id,
+                        'order_type': order_type,
+                        'price': price,
+                        'quantity': order_size
+                    }
+
+                    # Add to database
+                    await self.add_active_order(order_data)
+                    
+                    # Add to memory list
                     self.active_orders.append({
                         'order_id': order_id,
                         'order_type': order_type,
                         'price': price,
                         'quantity': order_size
                     })
-                    await self.send_update({
-                        'event': 'order_placed',
-                        'order_type': order_type,
-                        'price': price,
-                        'order_size': order_size,
-                    })
+                    
                 else:
                     # Handle API error response
                     error_code = order.get('code')
@@ -296,6 +305,7 @@ class GridStrategy:
                     logging.error(f"Failed to place order: {error_code} - {error_msg}")
             except Exception as e:
                 logging.error(f"Error placing {order_type.upper()} order at ${price}: {str(e)}")
+
 
     async def place_batch_orders(self):
         """Place initial buy and sell orders based on grid levels in batches."""
@@ -357,13 +367,18 @@ class GridStrategy:
     async def execute_strategy(self):
         """Execute the grid trading strategy with continuous monitoring."""
         logging.info("Starting the grid trading strategy execution.")
-
-        # Start the WebSocket in a separate task to continuously update the price
-        price_update_task = asyncio.create_task(self.update_price())
-
-        last_checked_price = None  # Track the last checked price
-
+        
+        
+        price_update_task = None
+        
+        
         try:
+            # Создаем одну сессию на все время работы стратегии
+            self.session = aiohttp.ClientSession()
+            price_update_task = asyncio.create_task(self.update_price())
+            
+            last_checked_price = None  # Track the last checked price
+            
             while not self.stop_flag:
                 start_time = time.time()  # Record the start time of the loop
 
@@ -384,9 +399,7 @@ class GridStrategy:
                         # Then calculate order sizes
                         await self.calculate_order_size()
                         
-                        # Place initial batch orders
                         await self.place_batch_orders()
-
                     # Calculate the deviation from the initial price
                     deviation = (self.current_price - self.initial_price) / self.initial_price
 
@@ -406,12 +419,12 @@ class GridStrategy:
                                 profit = (sell_price - buy['price']) * buy['quantity']
                                 self.realized_profit_a += profit
                                 logging.info(f"Realized profit from buy-sell pair: ${profit:.2f}")
-                                self.trade_history.append({
-                                    'buy_price': buy['price'],
-                                    'sell_price': sell_price,
-                                    'quantity': buy['quantity'],
-                                    'profit': profit
-                                })
+                                await self.add_trade_to_history(
+                                    buy_price=buy['price'],
+                                    sell_price=sell_price,
+                                    quantity=buy['quantity'],
+                                    profit=profit
+                                )
 
                     async def check_sell_orders():
                         sell_prices = [sell['price'] for sell in self.sell_positions]
@@ -425,14 +438,12 @@ class GridStrategy:
                                 profit = (sell['price'] - buy_price) * sell['quantity']
                                 self.realized_profit_b += profit
                                 logging.info(f"Realized profit from sell-buy pair: ${profit:.2f}")
-                                self.trade_history.append({
-                                    'sell_price': sell['price'],
-                                    'buy_price': buy_price,
-                                    'quantity': sell['quantity'],
-                                    'profit': profit
-                                })
-
-                    # Run both checks concurrently
+                                await self.add_trade_to_history(
+                                    buy_price=buy_price,
+                                    sell_price=sell['price'],
+                                    quantity=sell['quantity'],
+                                    profit=profit
+                                )
                     await asyncio.gather(check_buy_orders(), check_sell_orders())
 
                     # Log summary of the checks
@@ -449,8 +460,10 @@ class GridStrategy:
         except Exception as e:
             logging.error(f"Error in strategy execution: {str(e)}")
         finally:
-            await price_update_task
-            await self.close()
+            # Закрываем сессии только при завершении стратегии
+            if price_update_task:
+                await price_update_task
+            await self.close_all_sessions()
 
     async def reset_grid(self, new_initial_price):
         """Reset the grid when the deviation threshold is reached."""
@@ -466,36 +479,48 @@ class GridStrategy:
         async with self.throttler:
             try:
                 logging.info("Attempting to cancel all open orders.")
-                # Cancel all open orders using the Binance client
-                cancelled_orders = await self.binance_client.cancel_all_orders_async(
-                    self.symbol
-                )
-                if cancelled_orders:
-                    logging.info(f"All open orders for {self.symbol} have been cancelled.")
-                else:
-                    logging.warning(f"No open orders to cancel for {self.symbol}.")
+                # Отменяем ордера на бирже
+                cancelled_orders = await self.binance_client.cancel_all_orders_async(self.symbol)
+                
+                # Удаляем из базы данных
+                async with async_session() as session:
+                    await session.execute(delete(ActiveOrder))
+                    await session.execute(delete(TradeHistory))
+                    await session.commit()
+                
+                # Очищаем список в памяти
+                self.active_orders.clear()
+                self.trade_history.clear()
+                
+                logging.info(f"All open orders for {self.symbol} have been cancelled.")
             except Exception as e:
                 logging.error(f"Error cancelling orders: {str(e)}")
 
     async def close(self):
-        """Close any open sessions."""
+        """Close all sessions and connections."""
         logging.info("Closing the trading session.")
-        await self.binance_client.close()  # Close the BinanceClient session
-        await self.session.close()  # Close the HTTP session
-        await self.websocket.stop()  # Stop the WebSocket connection
+        await self.close_all_sessions()
 
-    def stop(self):
-        """Set the stop flag to true to stop the strategy execution."""
-        logging.info("Stopping the grid trading strategy.")
-        self.stop_flag = True
-
-    def get_active_orders(self):
-        """Return a list of currently active orders."""
-        return self.active_orders
-
-    def get_trade_history(self):
-        """Return a list of completed trades."""
-        return self.trade_history
+    async def get_real_time_data(self):
+        """Возвращает данные в реальном времени для WebSocket."""
+        return {
+            "current_price": self.current_price,
+            "initial_price": self.initial_price,
+            "deviation": (self.current_price - self.initial_price) / self.initial_price if self.initial_price else 0,
+            "realized_profit_a": self.realized_profit_a,
+            "realized_profit_b": self.realized_profit_b,
+            "active_orders_count": len(self.active_orders),
+            "completed_trades_count": len(self.trade_history),
+            "active_orders": [
+                {
+                    "order_id": order["order_id"],
+                    "order_type": order["order_type"],
+                    "price": order["price"],
+                    "quantity": order["quantity"],
+                    "created_at": order["created_at"]
+                } for order in self.active_orders
+            ]
+        }
 
     def extract_filters(self, exchange_info):
         """Extract necessary filters from exchange_info."""
@@ -557,15 +582,143 @@ class GridStrategy:
                 return False
         return True
 
-    async def initialize(self):
-        try:
-            await self.binance_client.initialize_session()
-            # Other async initializations if needed
-        except Exception as e:
-            logging.error(f"Error initializing GridStrategy: {str(e)}")
-            raise
+    async def connect(self, websocket: WebSocket):
+        """Добавляет новое WebSocket соединение."""
+        await websocket.accept()
+        self.active_connections.append(websocket)
 
-    async def run(self):
-        await self.initialize()
-        await self.execute_strategy()
+    def disconnect(self, websocket: WebSocket):
+        """Удаляет WebSocket соединение."""
+        self.active_connections.remove(websocket)
+
+
+    async def add_trade_to_history(self, buy_price, sell_price, quantity, profit):
+        """Добавляет сделку в историю и в базу данных."""
+        trade_data = {
+            'buy_price': buy_price,
+            'sell_price': sell_price,
+            'quantity': quantity,
+            'profit': profit,
+            'executed_at': datetime.datetime.now()  # Изменено с str на datetime объект
+        }
+        
+        # Добавляем в локальную историю
+        self.trade_history.append(trade_data)
+        
+        # Добавляем в базу данных
+        async with async_session() as session:
+            trade = TradeHistory(
+                buy_price=buy_price,
+                sell_price=sell_price,
+                quantity=quantity,
+                profit=profit,
+                executed_at=trade_data['executed_at']  # Теперь передаем datetime объект
+            )
+            session.add(trade)
+            await session.commit()
+
+    async def add_active_order(self, order_data):
+        """Добавляет активный ордер в базу данных и локальный список."""
+        try:
+            # Создаем объект ActiveOrder
+            active_order = ActiveOrder(
+                order_id=order_data["order_id"],  # Изменено с orderId
+                order_type=order_data["order_type"],  # Изменено с side
+                price=float(order_data["price"]),
+                quantity=float(order_data["quantity"]),  # Изменено с origQty
+                created_at=datetime.datetime.now()
+            )
+            
+            # Сохраняем в базу данных
+            async with async_session() as session:
+                # Проверяем существование ордера
+                existing_order = await session.execute(
+                    select(ActiveOrder).where(ActiveOrder.order_id == active_order.order_id)
+                )
+                if existing_order.scalar_one_or_none():
+                    # Если ордер существует, обновляем его
+                    await session.execute(
+                        update(ActiveOrder)
+                        .where(ActiveOrder.order_id == active_order.order_id)
+                        .values(
+                            order_type=active_order.order_type,
+                            price=active_order.price,
+                            quantity=active_order.quantity,
+                            created_at=active_order.created_at
+                        )
+                    )
+                else:
+                    # Если ордера нет, добавляем новый
+                    session.add(active_order)
+                
+                await session.commit()
+                
+            # Обновляем локальный список
+            self.active_orders = [order for order in self.active_orders if order["order_id"] != active_order.order_id]
+            self.active_orders.append({
+                "order_id": active_order.order_id,
+                "order_type": active_order.order_type,
+                "price": active_order.price,
+                "quantity": active_order.quantity,
+                "created_at": str(active_order.created_at)
+            })
+            
+            # Отправляем обновление через WebSocket
+            await self.send_update({
+                "event": "order_placed",
+                "active_orders": self.active_orders
+            })
+            
+        except Exception as e:
+            logging.error(f"Ошибка при сохранении активного ордера: {e}")
+
+    async def load_active_orders(self):
+        """Загружает активные ордера из базы данных."""
+        async with async_session() as session:
+            result = await session.execute(select(ActiveOrder))
+            orders = result.scalars().all()
+            self.active_orders = [
+                {
+                    'order_id': order.order_id,
+                    'order_type': order.order_type,
+                    'price': order.price,
+                    'quantity': order.quantity,
+                    'created_at': order.created_at
+                }
+                for order in orders
+            ]
+
+    async def close_all_sessions(self):
+        """Закрывает все активные сессии."""
+        try:
+            if hasattr(self, 'session') and self.session:
+                await self.session.close()
+                self.session = None
+                
+            if hasattr(self, 'binance_client'):
+                await self.binance_client.close()
+                
+            if hasattr(self, 'websocket'):
+                await self.websocket.stop()
+                
+            # Закрываем все WebSocket соединения
+            for connection in self.active_connections[:]:
+                try:
+                    await connection.close()
+                except Exception as e:
+                    logging.error(f"Ошибка закрытия WebSocket соединения: {e}")
+                self.active_connections.remove(connection)
+                
+        except Exception as e:
+            logging.error(f"Ошибка при закрытии сессий: {e}")
+            
+            
+    async def stop(self):
+        self.stop_flag = True
+        await self.cancel_all_orders()
+        await self.close_all_sessions()
+
+
+
+
 

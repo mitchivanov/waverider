@@ -12,7 +12,7 @@ class BinanceClient:
         self.api_key = api_key
         self.api_secret = api_secret
         self.testnet = testnet
-        self.session = None  # Initialize session as None
+        self.session = aiohttp.ClientSession()
 
         # Set the base URL based on the testnet parameter
         if self.testnet:
@@ -55,9 +55,6 @@ class BinanceClient:
 
     async def place_order_async(self, symbol, side, quantity, price, order_type='LIMIT', time_in_force='GTC'):
         """Place an order on Binance asynchronously."""
-        # Ensure the session is initialized
-        await self.initialize_session()
-
         endpoint = '/api/v3/order'
         timestamp = int(time.time() * 1000)
         params = {
@@ -80,6 +77,9 @@ class BinanceClient:
             'X-MBX-APIKEY': self.api_key
         }
 
+        # Log the parameters and headers for debugging
+
+
         # Make the POST request to place the order
         async with self.session.post(f"{self.BASE_URL}{endpoint}", params=params, headers=headers) as resp:
             response = await resp.json()
@@ -98,11 +98,6 @@ class BinanceClient:
                 print(f"An error occurred while fetching the current price from Binance: {str(e)}")
                 return None
 
-    async def initialize_session(self):
-        if self.session is None:
-            self.session = aiohttp.ClientSession()
-
     async def close(self):
-        if self.session:
-            await self.session.close()
-            self.session = None
+        # Close the aiohttp session
+        await self.session.close()
