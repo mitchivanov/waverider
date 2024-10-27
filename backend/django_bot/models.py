@@ -2,6 +2,7 @@ from django.db import models
 from gridstrat import GridStrategy
 import threading
 import asyncio
+import logging
 
 # Create your models here.
 
@@ -12,25 +13,42 @@ class TradingBotManager:
     @classmethod
     def start_bot(cls, parameters):
         if cls._instance is None:
-            # Initialize the GridStrategy with provided parameters
-            cls._instance = GridStrategy(**parameters)
-            # Start the strategy in a separate thread
-            cls._thread = threading.Thread(target=asyncio.run, args=(cls._instance.execute_strategy(),))
-            cls._thread.start()
+            try:
+                # Initialize the GridStrategy with provided parameters
+                cls._instance = GridStrategy(**parameters)
+                # Start the strategy in a separate thread
+                cls._thread = threading.Thread(target=cls._run_strategy)
+                cls._thread.start()
+                logging.info("Trading bot started successfully.")
+            except Exception as e:
+                logging.error(f"Error starting trading bot: {str(e)}")
+                cls._instance = None
+                cls._thread = None
+                raise
 
     @classmethod
     def stop_bot(cls):
         if cls._instance:
-            # Stop the strategy execution
+            logging.info("Stopping the trading bot...")
             cls._instance.stop()
+            if cls._thread:
+                cls._thread.join(timeout=10)  # Wait for the thread to finish
+                if cls._thread.is_alive():
+                    logging.warning("Bot thread did not stop gracefully.")
             cls._instance = None
             cls._thread = None
+            logging.info("Trading bot stopped.")
 
     @classmethod
     def update_parameters(cls, parameters):
-        # Stop the current bot and restart with new parameters
-        cls.stop_bot()
-        cls.start_bot(parameters)
+        try:
+            logging.info("Updating trading bot parameters...")
+            cls.stop_bot()
+            cls.start_bot(parameters)
+            logging.info("Trading bot parameters updated successfully.")
+        except Exception as e:
+            logging.error(f"Error updating trading bot parameters: {str(e)}")
+            raise
 
     @classmethod
     def get_parameters(cls):
@@ -47,14 +65,31 @@ class TradingBotManager:
 
     @classmethod
     def get_active_orders(cls):
-        # Retrieve active orders from the bot
-        if cls._instance:
-            return cls._instance.get_active_orders()
-        return []
+        if cls._instance and cls.is_bot_running():
+            try:
+                return cls._instance.get_active_orders()
+            except Exception as e:
+                logging.error(f"Error getting active orders: {str(e)}")
+                return {"error": "Failed to retrieve active orders"}
+        return {"error": "Bot not running"}
 
     @classmethod
     def get_trade_history(cls):
-        # Retrieve trade history from the bot
-        if cls._instance:
-            return cls._instance.get_trade_history()
-        return []
+        if cls._instance and cls.is_bot_running():
+            try:
+                return cls._instance.get_trade_history()
+            except Exception as e:
+                logging.error(f"Error getting trade history: {str(e)}")
+                return {"error": "Failed to retrieve trade history"}
+        return {"error": "Bot not running"}
+
+    @classmethod
+    def _run_strategy(cls):
+        try:
+            asyncio.run(cls._instance.execute_strategy())
+        except Exception as e:
+            logging.error(f"Error in strategy execution: {str(e)}")
+
+    @classmethod
+    def is_bot_running(cls):
+        return cls._instance is not None and cls._thread is not None and cls._thread.is_alive()

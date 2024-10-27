@@ -3,30 +3,70 @@ import axios from 'axios';
 
 function ActiveOrders() {
     const [orders, setOrders] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [isBotRunning, setIsBotRunning] = useState(false);
 
     useEffect(() => {
-        // Fetch active orders from the backend API
-        axios.get('/api/active-orders/')
-            .then(response => {
-                console.log('Fetched orders:', response.data);
-                // Handle the response data
-                setOrders(response.data); // Update state with the fetched orders
-            })
-            .catch(error => {
-                console.error('Error fetching active orders:', error);
-            });
-    }, []); // Empty dependency array ensures this effect runs once on component mount
+        checkBotStatus();
+        fetchOrders();
+    }, []);
+
+    const checkBotStatus = async () => {
+        try {
+            const response = await axios.get('/api/bot-status/');
+            setIsBotRunning(response.data.is_running);
+        } catch (error) {
+            console.error('Error checking bot status:', error);
+        }
+    };
+
+    const fetchOrders = async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const response = await axios.get('/api/active-orders/');
+            console.log('Fetched orders:', response.data);
+            setOrders(response.data);
+        } catch (error) {
+            console.error('Error fetching active orders:', error);
+            if (error.response && error.response.data && error.response.data.error) {
+                setError(error.response.data.error);
+            } else {
+                setError('Failed to fetch active orders. Please try again later.');
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (loading) {
+        return <div>Loading active orders...</div>;
+    }
+
+    if (!isBotRunning) {
+        return <div>The trading bot is not currently running.</div>;
+    }
+
+    if (error) {
+        return <div>Error: {error}</div>;
+    }
 
     return (
         <div>
             <h2>Active Orders</h2>
-            <ul>
-                {orders.map(order => (
-                    <li key={order.id}>
-                        {order.order_type} {order.quantity} @ ${order.price}
-                    </li>
-                ))}
-            </ul>
+            {orders.length > 0 ? (
+                <ul>
+                    {orders.map(order => (
+                        <li key={order.id}>
+                            {order.order_type} {order.quantity} @ ${order.price}
+                        </li>
+                    ))}
+                </ul>
+            ) : (
+                <p>No active orders at the moment.</p>
+            )}
+            <button onClick={fetchOrders}>Refresh Orders</button>
         </div>
     );
 }

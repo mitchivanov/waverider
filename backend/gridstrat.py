@@ -480,6 +480,7 @@ class GridStrategy:
     async def close(self):
         """Close any open sessions."""
         logging.info("Closing the trading session.")
+        await self.binance_client.close()  # Close the BinanceClient session
         await self.session.close()  # Close the HTTP session
         await self.websocket.stop()  # Stop the WebSocket connection
 
@@ -490,10 +491,7 @@ class GridStrategy:
 
     def get_active_orders(self):
         """Return a list of currently active orders."""
-        return [
-            {"id": 1, "order_type": "buy", "price": 50000, "quantity": 0.1},
-            {"id": 2, "order_type": "sell", "price": 51000, "quantity": 0.1},
-        ]
+        return self.active_orders
 
     def get_trade_history(self):
         """Return a list of completed trades."""
@@ -559,29 +557,15 @@ class GridStrategy:
                 return False
         return True
 
+    async def initialize(self):
+        try:
+            await self.binance_client.initialize_session()
+            # Other async initializations if needed
+        except Exception as e:
+            logging.error(f"Error initializing GridStrategy: {str(e)}")
+            raise
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    async def run(self):
+        await self.initialize()
+        await self.execute_strategy()
 

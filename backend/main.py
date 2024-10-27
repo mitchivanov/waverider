@@ -1,5 +1,11 @@
 import asyncio
 import logging
+import os
+import django
+import signal
+from multiprocessing import Process
+from django.core.asgi import get_asgi_application
+import subprocess
 from gridstrat import GridStrategy
 
 # Configure logging
@@ -16,7 +22,20 @@ logging.getLogger('websockets').setLevel(logging.WARNING)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('aiohttp').setLevel(logging.WARNING)
 
-async def main():
+# Set the environment variable for Django settings
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django_main.settings')
+
+# Initialize Django
+django.setup()
+
+# Get the ASGI application
+application = get_asgi_application()
+
+def run_daphne():
+    # Use subprocess to run the Daphne server
+    subprocess.run(['daphne', '-p', '8000', 'django_main.asgi:application'])
+
+async def execute_strategy():
     # Define trading parameters
     symbol = 'ETHUSDT'
     asset_a_funds = 1000  # Example funds in USDT (Asset A)
@@ -47,7 +66,32 @@ async def main():
     except Exception as e:
         logging.error(f"An error occurred: {e}")
     finally:
-        await strategy.session.close()  # Ensure the session is closed
+        if strategy.session:
+            await strategy.session.close()  # Ensure the session is closed
+
+async def main():
+    await execute_strategy()
+
+def signal_handler(signal, frame):
+    logging.info("SIGINT received, shutting down gracefully...")
+    # Perform any cleanup here
+    if daphne_process.is_alive():
+        daphne_process.terminate()
+    asyncio.get_event_loop().stop()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Start the Daphne server in a separate process
+    daphne_process = Process(target=run_daphne)
+    daphne_process.start()
+
+    # Register the signal handler for SIGINT
+    signal.signal(signal.SIGINT, signal_handler)
+
+    try:
+        # Run the trading strategy
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("Keyboard interrupt received, exiting...")
+
+    # Ensure the Daphne process is terminated when done
+    daphne_process.join()

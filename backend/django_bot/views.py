@@ -4,6 +4,7 @@ from rest_framework import status
 from .serializers import TradingParametersSerializer
 from .models import TradingBotManager
 from django.http import HttpResponse
+import logging
 
 class TradingParametersView(APIView):
     def get(self, request):
@@ -22,13 +23,28 @@ class TradingParametersView(APIView):
 
 class ActiveOrdersView(APIView):
     def get(self, request):
-        orders = TradingBotManager.get_active_orders()
-        return Response(orders)
+        try:
+            orders = TradingBotManager.get_active_orders()
+            logging.info(f"Retrieved {len(orders)} active orders.")
+            return Response(orders)
+        except Exception as e:
+            logging.error(f"Error retrieving active orders: {str(e)}")
+            return Response({"error": "Failed to retrieve active orders"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class TradeHistoryView(APIView):
     def get(self, request):
-        history = TradingBotManager.get_trade_history()
-        return Response(history)
+        try:
+            history = TradingBotManager.get_trade_history()
+            logging.info(f"Retrieved trade history with {len(history)} entries.")
+            return Response(history)
+        except Exception as e:
+            logging.error(f"Error retrieving trade history: {str(e)}")
+            return Response({"error": "Failed to retrieve trade history"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class BotStatusView(APIView):
+    def get(self, request):
+        is_running = TradingBotManager.is_bot_running()
+        return Response({"is_running": is_running})
 
 def home(request):
     return HttpResponse("Welcome to the Django Bot!")
