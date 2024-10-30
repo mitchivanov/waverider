@@ -28,10 +28,12 @@ class ActiveOrder(SQLModel, table=True):
 
 class TradeHistory(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    buy_price: float
-    sell_price: float
+    buy_price: Optional[float]
+    sell_price: Optional[float]
     quantity: float
     profit: float
+    profit_asset: Optional[str] = Field(default=None)
+    status: str = Field(default='OPEN')
     executed_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:
