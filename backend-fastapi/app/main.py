@@ -3,17 +3,16 @@ from typing import Dict, List, Set
 import logging
 import uvicorn
 from gridstrat import GridStrategy
-from schemas.schemas import TradingParametersSchema
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 import datetime
 from manager import TradingBotManager
-from schemas.schemas import TradingParametersSchema
 from database import async_session
 from sqlalchemy.future import select
 from models.models import ActiveOrder, TradeHistory
 import asyncio
 from sqlalchemy import delete
+from models.models import TradingParameters
 
 
 # Отключаем ненужные логи
@@ -47,7 +46,7 @@ async def startup_event():
     await init_db()
 
 @app.post("/api/bot/start")
-async def start_bot(params: TradingParametersSchema):
+async def start_bot(params: TradingParameters):
     try:
         # Очищаем базу данных перед запуском новой стратегии
         await clear_database()
