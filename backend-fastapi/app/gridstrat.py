@@ -615,27 +615,33 @@ class GridStrategy:
         self.active_connections.remove(websocket)
 
 
-    async def add_trade_to_history(self, buy_price, sell_price, quantity, profit):
-        """Добавляет сделку в историю и в базу данных."""
+    async def add_trade_to_history(self, buy_price, sell_price, quantity, profit, profit_asset, status):
+        """Adds a trade to the history and the database."""
+        executed_at = datetime.datetime.now()  # Capture the current time for execution
+
         trade_data = {
             'buy_price': buy_price,
             'sell_price': sell_price,
             'quantity': quantity,
             'profit': profit,
-            'executed_at': datetime.datetime.now()  # Изменено с str на datetime объект
+            'profit_asset': profit_asset,
+            'status': status,
+            'executed_at': executed_at  # Use the captured datetime object
         }
         
-        # Добавляем в локальную историю
+        # Add to local history
         self.trade_history.append(trade_data)
         
-        # Добавляем в базу данных
+        # Add to the database
         async with async_session() as session:
             trade = TradeHistory(
                 buy_price=buy_price,
                 sell_price=sell_price,
                 quantity=quantity,
                 profit=profit,
-                executed_at=trade_data['executed_at']  # Теперь передаем datetime объект
+                profit_asset=profit_asset,
+                status=status,
+                executed_at=executed_at  # Pass the captured datetime object
             )
             session.add(trade)
             await session.commit()
@@ -693,7 +699,7 @@ class GridStrategy:
             })
             
         except Exception as e:
-            logging.error(f"Ошибка при сохранении ��ктивного ордера: {e}")
+            logging.error(f"Ошибка при сохранении активного ордера: {e}")
 
     async def load_active_orders(self):
         """Загружает активные ордера из базы данных."""
