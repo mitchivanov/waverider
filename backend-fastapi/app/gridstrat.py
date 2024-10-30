@@ -83,6 +83,10 @@ class GridStrategy:
         self.open_trades = []
         self.active_connections: List[WebSocket] = []
 
+        # Extract and store base and quote assets
+        self.base_asset = self.symbol[:-4]   # e.g., 'BTC' from 'BTCUSDT'
+        self.quote_asset = self.symbol[-4:]  # e.g., 'USDT' from 'BTCUSDT'
+
         # Check account balance
         self.check_account_balance()
 
@@ -414,13 +418,17 @@ class GridStrategy:
                                 sell_price = buy['price'] + ((self.deviation_threshold / self.grids) * self.initial_price)
                                 sell_order = await self.place_limit_order(sell_price, 'sell', buy['quantity'])
                                 self.buy_positions.remove(buy)
+                                
+                                # Get the quote asset (USDT) from the trading pair
+                                quote_asset = self.symbol[-4:]  # e.g., 'USDT' from 'BTCUSDT'
+                                
                                 # Record the trade as 'OPEN' with zero profit
                                 await self.add_trade_to_history(
                                     buy_price=buy['price'],
                                     sell_price=None,
                                     quantity=buy['quantity'],
                                     profit=0,
-                                    profit_asset=None,
+                                    profit_asset=quote_asset,  # Use quote asset (USDT) for buy-sell pairs
                                     status='OPEN'
                                 )
                                 # Track the open trade
@@ -442,13 +450,17 @@ class GridStrategy:
                                 buy_price = sell['price'] - ((self.deviation_threshold / self.grids) * self.initial_price)
                                 buy_order = await self.place_limit_order(buy_price, 'buy', sell['quantity'])
                                 self.sell_positions.remove(sell)
+                                
+                                # Get the base asset (BTC) from the trading pair
+                                base_asset = self.symbol[:-4]  # e.g., 'BTC' from 'BTCUSDT'
+                                
                                 # Record the trade as 'OPEN' with zero profit
                                 await self.add_trade_to_history(
                                     buy_price=None,
                                     sell_price=sell['price'],
                                     quantity=sell['quantity'],
                                     profit=0,
-                                    profit_asset=None,
+                                    profit_asset=base_asset,  # Use base asset (BTC) for sell-buy pairs
                                     status='OPEN'
                                 )
                                 # Track the open trade
@@ -761,40 +773,45 @@ class GridStrategy:
                     quantity = sell_order['quantity']
                     profit_usdt = (sell_price - buy_price) * quantity
                     self.realized_profit_a += profit_usdt
-                    logging.info(f"Realized profit from buy-sell pair: ${profit_usdt:.2f} USDT")
-                    # Update the trade to 'CLOSED' with realized profit
+                    
+                    # Get quote asset (USDT)
+                    quote_asset = self.symbol[-4:]
+                    
+                    logging.info(f"Realized profit from buy-sell pair: ${profit_usdt:.2f} {quote_asset}")
                     await self.update_trade_in_history(
                         buy_price=buy_price,
                         sell_price=sell_price,
                         quantity=quantity,
                         profit=profit_usdt,
-                        profit_asset='USDT',
+                        profit_asset=quote_asset,
                         status='CLOSED'
                     )
-                    # Remove the trade from open_trades
                     self.open_trades.remove(trade)
+                    
             elif 'sell_order' in trade and 'buy_order' in trade:
                 # This is a sell-buy sequence
                 buy_order = trade['buy_order']
                 order_status = await self.get_order_status(self.symbol, buy_order.get('order_id'))
                 if order_status == 'FILLED':
-                    # Both legs executed, calculate profit in BTC
+                    # Both legs executed, calculate profit in base asset
                     sell_price = trade['sell_order']['price']
                     buy_price = buy_order['price']
                     quantity = buy_order['quantity']
                     profit_btc = quantity * ((sell_price / buy_price) - 1)
                     self.realized_profit_b += profit_btc
-                    logging.info(f"Realized profit from sell-buy pair: {profit_btc:.8f} BTC")
-                    # Update the trade to 'CLOSED' with realized profit
+                    
+                    # Get base asset (BTC)
+                    base_asset = self.symbol[:-4]
+                    
+                    logging.info(f"Realized profit from sell-buy pair: {profit_btc:.8f} {base_asset}")
                     await self.update_trade_in_history(
                         buy_price=buy_price,
                         sell_price=sell_price,
                         quantity=quantity,
                         profit=profit_btc,
-                        profit_asset=self.symbol.replace('USDT', ''),
+                        profit_asset=base_asset,
                         status='CLOSED'
                     )
-                    # Remove the trade from open_trades
                     self.open_trades.remove(trade)
 
     async def update_trade_in_history(self, buy_price, sell_price, quantity, profit, profit_asset, status):
@@ -845,6 +862,13 @@ class GridStrategy:
             profit_b_in_usdt = 0
         total_profit_usdt = self.realized_profit_a + profit_b_in_usdt
         return total_profit_usdt
+
+    def get_assets_from_symbol(self):
+        """Helper method to get base and quote assets from the trading pair symbol."""
+        return {
+            'base': self.base_asset,
+            'quote': self.quote_asset
+        }
 
 
 
