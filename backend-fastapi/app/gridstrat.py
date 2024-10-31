@@ -124,7 +124,8 @@ class GridStrategy:
             await self.update_price()  # Retry updating price
         finally:
             await self.websocket.stop()
-            logging.info("WebSocket connection closed.")    
+            logging.info("WebSocket connection closed.")
+                
     async def calculate_order_size(self):
         """Calculate the order sizes using linear distribution with a growth factor."""
         # Ensure current price is available
