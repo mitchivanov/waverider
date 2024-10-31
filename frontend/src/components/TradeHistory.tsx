@@ -9,7 +9,7 @@ export const TradeHistory: React.FC = () => {
   useWebSocket(botService.getWebSocketUrl(), {
     onMessage: (event) => {
       const data = JSON.parse(event.data);
-      if (data.type === 'trades') {
+      if (data.type === 'all_trades_data') {
         setTrades(data.payload || []);
       }
     },
@@ -38,6 +38,9 @@ export const TradeHistory: React.FC = () => {
                 <td>${trade.sell_price.toFixed(2)}</td>
                 <td>{trade.quantity}</td>
                 <td>${trade.profit.toFixed(2)}</td>
+                <td>{trade.profit_asset}</td>
+                <td>{trade.status}</td>
+                <td>{trade.trade_type}</td>
                 <td>{trade.executed_at}</td>
               </tr>
             ))

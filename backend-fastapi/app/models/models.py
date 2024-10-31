@@ -34,6 +34,7 @@ class TradeHistory(SQLModel, table=True):
     profit: float
     profit_asset: Optional[str] = Field(default=None)
     status: str = Field(default='OPEN')
+    trade_type: str = Field(default='LIMIT')
     executed_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:

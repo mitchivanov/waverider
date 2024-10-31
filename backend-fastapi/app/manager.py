@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from gridstrat import GridStrategy
+from gridstrat import start_grid_strategy, stop_grid_strategy, GridStrategy
 from models.models import TradingParameters, ActiveOrder, TradeHistory
 from sqlalchemy import delete
 from sqlalchemy.future import select
@@ -21,7 +21,7 @@ class TradingBotManager:
 
     @classmethod
     async def is_running(cls) -> bool:
-        return cls._bot_task is not None and not cls._bot_task.done()
+        return cls._instance is not None
 
     @classmethod
     async def start_bot(cls, parameters: dict):
@@ -29,8 +29,7 @@ class TradingBotManager:
             if await cls.is_running():
                 await cls.stop_bot()
             
-            cls._instance = GridStrategy(**parameters)
-            cls._bot_task = asyncio.create_task(cls._instance.start_strategy())
+            cls._instance = await start_grid_strategy(parameters)
             cls._start_time = datetime.datetime.now()
             
             logging.info("Бот успешно запущен")
@@ -43,119 +42,57 @@ class TradingBotManager:
     async def stop_bot(cls):
         if cls._instance:
             try:
-                # Устанавливаем флаг остановки
-                cls._instance.stop_flag = True
-                
-                # Отменяем все активные ордера и ждем подтверждения
-                await cls._instance.cancel_all_orders()
-                
-                # Очищаем историю ордеров в базе данных
-                async with async_session() as session:
-                    await session.execute(delete(ActiveOrder))
-                    await session.commit()
-                
-                # Закрываем все сессии и соединения
-                await cls._instance.close_all_sessions()
-                
-                # Отменяем задачу бота если она существует
-                if cls._bot_task and not cls._bot_task.done():
-                    cls._bot_task.cancel()
-                    try:
-                        await cls._bot_task
-                    except asyncio.CancelledError:
-                        pass
-                
+                await stop_grid_strategy(cls._instance)
                 cls._instance = None
-                cls._bot_task = None
                 cls._start_time = None
+                cls._bot_task = None
                 
-                logging.info("Бот успешно остановлен и все сессии закрыты.")
+                logging.info("Бот успешно остановлен")
                 return True
-                
             except Exception as e:
                 logging.error(f"Ошибка при остановке бота: {e}")
-                raise e  # Пробрасываем ошибку для обработки на уровне API
-
-    @classmethod
-    async def update_parameters(cls, parameters: dict):
-        await cls.stop_bot()
-        await cls.start_bot(parameters)
-
-    @classmethod
-    async def get_parameters(cls) -> dict:
-        async with async_session() as session:
-            result = await session.execute(select(TradingParameters).first())
-            params = result.scalar_one_or_none()
-            if params:
-                return params.dict()
-            return {}
-
-
-    @classmethod
-    async def get_current_price(cls) -> Optional[float]:
-        if cls._instance:
-            return cls._instance.current_price
-        return None
-
-    @classmethod
-    async def get_initial_price(cls) -> Optional[float]:
-        if cls._instance:
-            return cls._instance.initial_price
-        return None
-
-    @classmethod
-    async def get_deviation(cls) -> Optional[float]:
-        if cls._instance and cls._instance.initial_price:
-            return (cls._instance.current_price - cls._instance.initial_price) / cls._instance.initial_price
-        return None
-
-    @classmethod
-    async def get_real_time_data(cls):
-        if cls._instance:
-            return await cls._instance.get_real_time_data()
-        return None
-
-    @classmethod
-    async def get_realized_profit_a(cls) -> float:
-        if cls._instance:
-            return cls._instance.realized_profit_a
-        return 0.0
-
-    @classmethod
-    async def get_realized_profit_b(cls) -> float:
-        if cls._instance:
-            return cls._instance.realized_profit_b
-        return 0.0
-
-    @classmethod
-    def get_instance(cls) -> Optional[GridStrategy]:
-        return cls._instance
+                raise
 
     @classmethod
     async def get_current_parameters(cls) -> Optional[dict]:
         if cls._instance:
+            # Получаем статус стратегии и ожидаем результат
+            parameters = await cls._instance.get_strategy_status()
+            
             return {
-                "symbol": cls._instance.symbol,
-                "asset_a_funds": cls._instance.asset_a_funds,
-                "asset_b_funds": cls._instance.asset_b_funds,
-                "grids": cls._instance.grids,
-                "deviation_threshold": cls._instance.deviation_threshold,
-                "trail_price": cls._instance.trail_price,
-                "only_profitable_trades": cls._instance.only_profitable_trades,
-                "growth_factor": cls._instance.growth_factor,
-                "use_granular_distribution": cls._instance.use_granular_distribution
+                "status": parameters["status"],
+                "current_price": parameters["current_price"],
+                "initial_price": parameters["initial_price"],
+                "deviation": parameters["deviation"],
+                "realized_profit_a": parameters["realized_profit_a"],
+                "realized_profit_b": parameters["realized_profit_b"],
+                "total_profit_usdt": parameters["total_profit_usdt"],
+                "running_time": parameters["running_time"],
+                
+                "active_orders_count": parameters["active_orders_count"],
+                "completed_trades_count": parameters["completed_trades_count"],
+                
+                "unrealized_profit_a": parameters["unrealized_profit"]["unrealized_profit_a"],
+                "unrealized_profit_b": parameters["unrealized_profit"]["unrealized_profit_b"],
+                "unrealized_profit_usdt": parameters["unrealized_profit"]["total_unrealized_profit_usdt"],
+                
+                "active_orders": parameters["active_orders"],
+                
+                "initial_parameters": parameters["initial_parameters"]
             }
         return None
 
-    @classmethod
-    async def get_start_time(cls) -> Optional[datetime.datetime]:
-        return cls._start_time if cls._start_time else None
 
     @classmethod
-    async def get_total_profit(cls) -> float:
+    async def get_active_orders_list(cls) -> List[ActiveOrder]:
         async with async_session() as session:
-            result = await session.execute(select(TradeHistory))
-            trades = result.scalars().all()
-            return sum(trade.profit for trade in trades)
-
+            result_orders = await session.execute(select(ActiveOrder))
+            active_orders = result_orders.scalars().all()
+            return list(active_orders)
     
+    @classmethod
+    async def get_all_trades_list(cls) -> List[TradeHistory]:
+        async with async_session() as session:
+            result_trades = await session.execute(select(TradeHistory))
+            trade_history = result_trades.scalars().all()
+            return list(trade_history)

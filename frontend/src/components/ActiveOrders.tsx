@@ -9,7 +9,7 @@ export const ActiveOrders: React.FC = () => {
   useWebSocket(botService.getWebSocketUrl(), {
     onMessage: (event) => {
       const data = JSON.parse(event.data);
-      if (data.type === 'orders') {
+      if (data.type === 'active_orders_data') {
         setOrders(data.payload || []);
       }
     },

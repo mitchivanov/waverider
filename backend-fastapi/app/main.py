@@ -20,6 +20,16 @@ logging.getLogger('websockets').setLevel(logging.ERROR)
 logging.getLogger('urllib3').setLevel(logging.ERROR)
 logging.getLogger('aiohttp').setLevel(logging.ERROR)
 
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.DEBUG
+)
+
+# Создаем логгер для websocket
+ws_logger = logging.getLogger('websocket')
+ws_logger.setLevel(logging.DEBUG)
+
 router = APIRouter()
 active_connections: Set[WebSocket] = set()
 
@@ -48,38 +58,33 @@ async def startup_event():
 @app.post("/api/bot/start")
 async def start_bot(params: TradingParameters):
     try:
-        # Очищаем базу данных перед запуском новой стратегии
         await clear_database()
         
-        strategy = GridStrategy(
-            symbol=params.symbol,
-            asset_a_funds=params.asset_a_funds,
-            asset_b_funds=params.asset_b_funds,
-            grids=params.grids,
-            deviation_threshold=params.deviation_threshold,
-            growth_factor=params.growth_factor,
-            use_granular_distribution=params.use_granular_distribution,
-            trail_price=params.trail_price,
-            only_profitable_trades=params.only_profitable_trades
-        )
+        parameters = {
+            "symbol": params.symbol,
+            "asset_a_funds": params.asset_a_funds,
+            "asset_b_funds": params.asset_b_funds,
+            "grids": params.grids,
+            "deviation_threshold": params.deviation_threshold,
+            "growth_factor": params.growth_factor,
+            "use_granular_distribution": params.use_granular_distribution,
+            "trail_price": params.trail_price,
+            "only_profitable_trades": params.only_profitable_trades
+        }
         
-        bot_instance["bot"] = strategy
-        await strategy.execute_strategy()
+        await TradingBotManager.start_bot(parameters)
         return {"status": "Bot started successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/bot/stop")
 async def stop_bot():
-    if "bot" in bot_instance:
-        try:
-            bot_instance["bot"].stop()
-            await bot_instance["bot"].close()
-            del bot_instance["bot"]
-            return {"status": "Bot stopped successfully"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error stopping bot: {str(e)}")
-    raise HTTPException(status_code=404, detail="Bot is not running")
+    try:
+        await TradingBotManager.stop_bot()
+        return {"status": "Bot stopped successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 class ConnectionManager:
     def __init__(self):
@@ -105,46 +110,64 @@ manager = ConnectionManager()
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    ws_logger.info(f"WebSocket подключен: {websocket.client}")
     try:
         while True:
             try:
-                # Получаем статус бота
-                is_running = await TradingBotManager.is_running()
-                current_price = await TradingBotManager.get_current_price()
-                total_profit = await TradingBotManager.get_total_profit()
-                
-                # Получаем время работы
-                start_time = await TradingBotManager.get_start_time()
-                running_time = str(datetime.datetime.now() - start_time) if start_time else None
-
-                # Получаем данные из базы
-                async with async_session() as session:
-                    # Получаем активные ордера
-                    result_orders = await session.execute(select(ActiveOrder))
-                    active_orders = result_orders.scalars().all()
-                    active_orders_count = len(active_orders)
+                parameters = await TradingBotManager.get_current_parameters()
+                if parameters is None:
+                    ws_logger.warning("Параметры не получены: бот не запущен")
+                    await asyncio.sleep(1)
+                    continue
                     
-                    # Получаем историю сделок
-                    result_trades = await session.execute(select(TradeHistory))
-                    trade_history = result_trades.scalars().all()
-                    completed_trades_count = len(trade_history)
-
+                
+                status = parameters["status"]
+                current_price = parameters["current_price"]
+                deviation = parameters["deviation"]
+                
+                realized_profit_a = parameters["realized_profit_a"]
+                realized_profit_b = parameters["realized_profit_b"]
+                total_profit_usdt = parameters["total_profit_usdt"]
+                
+                active_orders_count = parameters["active_orders_count"]
+                completed_trades_count = parameters["completed_trades_count"]
+                
+                unrealized_profit_a = parameters["unrealized_profit_a"]
+                unrealized_profit_b = parameters["unrealized_profit_b"]
+                unrealized_profit_usdt = parameters["unrealized_profit_usdt"]
+                
+                running_time = parameters["running_time"]
+                
+                initial_parameters = parameters["initial_parameters"]
                 # Отправляем статус
                 status_update = {
                     "type": "status_update",
                     "data": {
-                        "status": is_running,
+                        "status": status,
                         "current_price": current_price,
-                        "total_profit": total_profit,
+                        "deviation": deviation,
+                        
+                        "realized_profit_a": realized_profit_a,
+                        "realized_profit_b": realized_profit_b,
+                        "total_profit_usdt": total_profit_usdt,
+                        
                         "active_orders_count": active_orders_count,
                         "completed_trades_count": completed_trades_count,
-                        "running_time": running_time
+                        
+                        "running_time": running_time,
+
+                        "unrealized_profit_a": unrealized_profit_a,
+                        "unrealized_profit_b": unrealized_profit_b,
+                        "unrealized_profit_usdt": unrealized_profit_usdt,
+                        
+                        "initial_parameters": initial_parameters,
                     }
                 }
+                ws_logger.debug(f"Отправка status_update: {status_update}")
                 await manager.broadcast(status_update)
 
                 # Отправляем данные об ордерах и сделках
-                orders_data = [
+                active_orders_data = [
                     {
                         "order_id": order.order_id,
                         "order_type": order.order_type,
@@ -152,30 +175,36 @@ async def websocket_endpoint(websocket: WebSocket):
                         "quantity": order.quantity,
                         "created_at": order.created_at.isoformat()
                     }
-                    for order in active_orders
+                    for order in await TradingBotManager.get_active_orders_list()
                 ]
+                ws_logger.debug(f"Отправка active_orders_data: {len(active_orders_data)} ордеров")
 
-                trades_data = [
+                all_trades_data = [
                     {
                         "buy_price": trade.buy_price,
                         "sell_price": trade.sell_price,
                         "quantity": trade.quantity,
                         "profit": trade.profit,
+                        "profit_asset": trade.profit_asset,
+                        "status": trade.status,
+                        "trade_type": trade.trade_type,
                         "executed_at": trade.executed_at.isoformat()
                     }
-                    for trade in trade_history
+                    for trade in await TradingBotManager.get_all_trades_list()
                 ]
 
-                await manager.broadcast({"type": "orders", "payload": orders_data})
-                await manager.broadcast({"type": "trades", "payload": trades_data})
+                await manager.broadcast({"type": "active_orders_data", "payload": active_orders_data})
+                await manager.broadcast({"type": "all_trades_data", "payload": all_trades_data})
 
                 await asyncio.sleep(1)
             except Exception as e:
-                logging.error(f"Error sending updates: {e}")
+                ws_logger.error(f"Ошибка при отправке обновлений: {e}", exc_info=True)
                 break
     except WebSocketDisconnect:
+        ws_logger.info(f"WebSocket отключен: {websocket.client}")
         manager.disconnect(websocket)
     finally:
+        ws_logger.info(f"WebSocket соединение закрыто: {websocket.client}")
         manager.disconnect(websocket)
 
 @app.on_event("shutdown")

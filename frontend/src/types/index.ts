@@ -23,14 +23,31 @@ export interface TradeHistory {
     sell_price: number;
     quantity: number;
     profit: number;
+    profit_asset: string;
+    status: string;
+    trade_type: string;
     executed_at?: string;
 }
 
 export interface BotStatus {
     status: 'running' | 'stopped';
     current_price: number | null;
-    total_profit: number;
+    deviation: number | null;
+    
+    // Realized profits
+    realized_profit_a: number;
+    realized_profit_b: number;
+    total_profit_usdt: number;
+    
+    // Unrealized profits
+    unrealized_profit_a: number;
+    unrealized_profit_b: number;
+    unrealized_profit_usdt: number;
+    
+    // Counts
     active_orders_count: number;
     completed_trades_count: number;
+    
     running_time: string | null;
-  }
+    initial_parameters: TradingParameters;
+}

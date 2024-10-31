@@ -57,6 +57,7 @@ class GridStrategy:
         self.asset_b_funds = asset_b_funds
         self.grids = grids
         self.deviation_threshold = deviation_threshold
+        self.deviation = None
         self.initial_price = None
         self.trail_price = trail_price
         self.grid_levels = {'buy': [], 'sell': []}
@@ -106,6 +107,24 @@ class GridStrategy:
 
         logging.info(f"Sufficient balance for {quote_asset} and {base_asset}.")
 
+    async def update_price(self):
+        """Update the current price using the WebSocket."""
+        try:
+            await self.websocket.start()
+            logging.info("WebSocket connection started.")
+            async with self.websocket.bsm.symbol_ticker_socket(symbol=self.symbol.lower()) as stream:
+                while True:
+                    msg = await stream.recv()
+                    if msg is None:
+                        break  # Exit the loop if the stream is closed
+                    self.current_price = float(msg['c'])  # 'c' is the current price in the message
+        except Exception as e:
+            logging.error(f"Error in update_price: {e}")
+            await asyncio.sleep(5)  # Wait before retrying
+            await self.update_price()  # Retry updating price
+        finally:
+            await self.websocket.stop()
+            logging.info("WebSocket connection closed.")    
     async def calculate_order_size(self):
         """Calculate the order sizes using linear distribution with a growth factor."""
         # Ensure current price is available
@@ -241,12 +260,13 @@ class GridStrategy:
                 
                 if 'orderId' in order:
                     # Update positions and active orders
-                    if order_type.lower() == 'buy':
-                        self.buy_positions.append({'price': price, 'quantity': order_size})
-                    elif order_type.lower() == 'sell':
-                        self.sell_positions.append({'price': price, 'quantity': order_size})
 
                     order_id = order['orderId']
+                    
+                    if order_type.lower() == 'buy':
+                        self.buy_positions.append({'price': price, 'quantity': order_size, 'order_id': order_id})
+                    elif order_type.lower() == 'sell':
+                        self.sell_positions.append({'price': price, 'quantity': order_size, 'order_id': order_id})
                     
                     order_data = {
                         'order_id': order_id,
@@ -263,7 +283,8 @@ class GridStrategy:
                         'order_id': order_id,
                         'order_type': order_type,
                         'price': price,
-                        'quantity': order_size
+                        'quantity': order_size,
+                        'created_at': datetime.now().isoformat()
                     })
                     
                 else:
@@ -370,6 +391,8 @@ class GridStrategy:
                     # Calculate the deviation from the initial price
                     deviation = (self.current_price - self.initial_price) / self.initial_price
 
+                    self.deviation = deviation
+
                     # Log the current price and deviation
                     logging.info(f"Current price: ${self.current_price:.2f}. Deviation: {deviation:.2%}.")
 
@@ -402,7 +425,8 @@ class GridStrategy:
                                         'price': sell_price,
                                         'quantity': buy['quantity'],
                                         'order_id': sell_order['order_id'] if sell_order else None
-                                    }
+                                    },
+                                    'side': 'BUY_SELL'
                                 })
                                 logging.info(f"Placed corresponding sell order at price ${sell_price:.2f}")
 
@@ -434,7 +458,8 @@ class GridStrategy:
                                         'price': buy_price,
                                         'quantity': sell['quantity'],
                                         'order_id': buy_order['order_id'] if buy_order else None
-                                    }
+                                    },
+                                    'side': 'SELL_BUY'
                                 })
                                 logging.info(f"Placed corresponding buy order at price ${buy_price:.2f}")
 
@@ -460,7 +485,7 @@ class GridStrategy:
             # Закрываем сессии только при завершении стратегии
             if price_update_task:
                 await price_update_task
-            await self.close_all_sessions()
+            await self.stop_strategy()
 
     async def reset_grid(self, new_initial_price):
         """Reset the grid when the deviation threshold is reached."""
@@ -487,7 +512,6 @@ class GridStrategy:
                 # Удаляем из базы данных
                 async with async_session() as session:
                     await session.execute(delete(ActiveOrder))
-                    await session.execute(delete(TradeHistory))
                     await session.commit()
                 
                 # Очищаем список в памяти
@@ -563,54 +587,62 @@ class GridStrategy:
     async def check_open_trades(self):
         """Periodically check if the second leg of each open trade has been executed."""
         for trade in list(self.open_trades):
-            if 'buy_order' in trade and 'sell_order' in trade:
-                # This is a buy-sell sequence
-                sell_order = trade['sell_order']
-                order_status = await self.get_order_status(self.symbol, sell_order.get('order_id'))
-                if order_status == 'FILLED':
-                    # Both legs executed, calculate profit in USDT
-                    buy_price = trade['buy_order']['price']
-                    sell_price = sell_order['price']
-                    quantity = sell_order['quantity']
-                    profit_usdt = (sell_price - buy_price) * quantity
-                    self.realized_profit_a += profit_usdt
-                    logging.info(f"Realized profit from buy-sell pair: ${profit_usdt:.2f} USDT")
-                    # Update the trade to 'CLOSED' with realized profit
-                    await self.update_trade_in_history(
-                        buy_price=buy_price,
+            logging.info(f"Checking trade: {trade}")
+            try:
+                if 'buy_order' in trade and 'sell_order' in trade and trade['sequence_type'] == 'BUY_SELL':
+                    # This is a buy-sell sequence
+                    sell_order = trade['sell_order']
+                    order_status = await self.get_order_status(self.symbol, sell_order.get('order_id'))
+                    if order_status == 'FILLED':
+                        # Both legs executed, calculate profit in USDT
+                        buy_price = trade['buy_order']['price']
+                        sell_price = sell_order['price']
+                        quantity = sell_order['quantity']
+                        profit_usdt = (sell_price - buy_price) * quantity
+                        self.realized_profit_a += profit_usdt
+                        
+                        # Get quote asset (USDT)
+                        quote_asset = self.symbol[-4:]
+                    
+                        logging.info(f"Realized profit from buy-sell pair: ${profit_usdt:.2f} {quote_asset}")
+                        await self.update_trade_in_history(
+                            buy_price=buy_price,
                         sell_price=sell_price,
                         quantity=quantity,
                         profit=profit_usdt,
-                        profit_asset='USDT',
+                        profit_asset=quote_asset,
                         status='CLOSED'
-                    )
-                    # Remove the trade from open_trades
-                    self.open_trades.remove(trade)
-                    
-            elif 'sell_order' in trade and 'buy_order' in trade:
-                # This is a sell-buy sequence
-                buy_order = trade['buy_order']
-                order_status = await self.get_order_status(self.symbol, buy_order.get('order_id'))
-                if order_status == 'FILLED':
-                    # Both legs executed, calculate profit in BTC
-                    sell_price = trade['sell_order']['price']
-                    buy_price = buy_order['price']
-                    quantity = buy_order['quantity']
-                    profit_btc = quantity * ((sell_price / buy_price) - 1)
-                    self.realized_profit_b += profit_btc
-                    logging.info(f"Realized profit from sell-buy pair: {profit_btc:.8f} BTC")
-                    # Update the trade to 'CLOSED' with realized profit
-                    await self.update_trade_in_history(
+                        )
+                        self.open_trades.remove(trade)
+                        
+                elif 'sell_order' in trade and 'buy_order' in trade and trade['sequence_type'] == 'SELL_BUY':
+                    # This is a sell-buy sequence
+                    buy_order = trade['buy_order']
+                    order_status = await self.get_order_status(self.symbol, buy_order.get('order_id'))
+                    if order_status == 'FILLED':
+                        # Both legs executed, calculate profit in base asset
+                        sell_price = trade['sell_order']['price']
+                        buy_price = buy_order['price']
+                        quantity = buy_order['quantity']
+                        profit_btc = quantity * ((sell_price / buy_price) - 1)
+                        self.realized_profit_b += profit_btc
+                        
+                        # Get base asset (BTC)
+                        base_asset = self.symbol[:-4]
+                        
+                        logging.info(f"Realized profit from sell-buy pair: {profit_btc:.8f} {base_asset}")
+                        await self.update_trade_in_history(
                         buy_price=buy_price,
                         sell_price=sell_price,
                         quantity=quantity,
                         profit=profit_btc,
-                        profit_asset=self.symbol.replace('USDT', ''),
+                        profit_asset=base_asset,
                         status='CLOSED'
-                    )
-                    # Remove the trade from open_trades
-                    self.open_trades.remove(trade)
-                                    
+                        )
+                        self.open_trades.remove(trade)        
+            except Exception as e:
+                logging.error(f"Error checking BUY_SELL or SELL_BUY trade: {e}")
+                                                     
     async def get_order_status(self, symbol, order_id):
         """Checks the status of an order from the exchange."""
         async with self.throttler:
@@ -620,10 +652,45 @@ class GridStrategy:
             except Exception as e:
                 logging.error(f"Error fetching order status for order {order_id}: {e}")
                 return None
+
+    async def close_all_sessions(self):
+        """Закрывает все активны сессии."""
+        try:
+            if hasattr(self, 'session') and self.session:
+                await self.session.close()
+                self.session = None
+                
+            if hasattr(self, 'binance_client'):
+                await self.binance_client.close()
+                
+            if hasattr(self, 'websocket'):
+                await self.websocket.stop()
+                
+            # Закрываем все WebSocket соединения
+            for connection in self.active_connections[:]:
+                try:
+                    await connection.close()
+                except Exception as e:
+                    logging.error(f"Ошибка закрытия WebSocket соединения: {e}")
+                self.active_connections.remove(connection)
+                
+        except Exception as e:
+            logging.error(f"Ошибка при закрытии сессий: {e}")
+
+
+# TRASH
+
+    def get_assets_from_symbol(self):
+        """Helper method to get base and quote assets from the trading pair symbol."""
+        return {
+            'base': self.base_asset,
+            'quote': self.quote_asset
+        }
+        
             
 # DATABASE OPERATIONS
 
-    async def add_trade_to_history(self, buy_price, sell_price, quantity, profit, profit_asset, status, order_type):
+    async def add_trade_to_history(self, buy_price, sell_price, quantity, profit, profit_asset, status, trade_type):
         """Добавляет завершенную сделку в историю."""
         trade_data = {
             'buy_price': buy_price,
@@ -632,7 +699,7 @@ class GridStrategy:
             'profit': profit,
             'profit_asset': profit_asset,
             'status': status,
-            'order_type': order_type,
+            'trade_type': trade_type,
             'executed_at': datetime.datetime.now()
         }
         
@@ -648,7 +715,7 @@ class GridStrategy:
                 profit=profit,
                 profit_asset=profit_asset,
                 status=status,
-                order_type=order_type,
+                trade_type=trade_type,
                 executed_at=datetime.datetime.now()
             )
             session.add(trade)
@@ -704,107 +771,6 @@ class GridStrategy:
         except Exception as e:
             logging.error(f"Ошибка при сохранении ��ктивного ордера: {e}")
 
-    async def load_active_orders(self):
-        """Загружает активные ордера из базы данных."""
-        async with async_session() as session:
-            result = await session.execute(select(ActiveOrder))
-            orders = result.scalars().all()
-            self.active_orders = [
-                {
-                    'order_id': order.order_id,
-                    'order_type': order.order_type,
-                    'price': order.price,
-                    'quantity': order.quantity,
-                    'created_at': order.created_at
-                }
-                for order in orders
-            ]
-
-    async def close_all_sessions(self):
-        """Закрывает все активны сессии."""
-        try:
-            if hasattr(self, 'session') and self.session:
-                await self.session.close()
-                self.session = None
-                
-            if hasattr(self, 'binance_client'):
-                await self.binance_client.close()
-                
-            if hasattr(self, 'websocket'):
-                await self.websocket.stop()
-                
-            # Закрываем все WebSocket соединения
-            for connection in self.active_connections[:]:
-                try:
-                    await connection.close()
-                except Exception as e:
-                    logging.error(f"Ошибка закрытия WebSocket соединения: {e}")
-                self.active_connections.remove(connection)
-                
-        except Exception as e:
-            logging.error(f"Ошибка при закрытии сессий: {e}")
-            
-            
-    async def stop(self):
-        self.stop_flag = True
-        await self.cancel_all_orders()
-        await self.close_all_sessions()
-
-    async def check_open_trades(self):
-        """Periodically check if the second leg of each open trade has been executed."""
-        for trade in list(self.open_trades):
-            if 'buy_order' in trade and 'sell_order' in trade:
-                # This is a buy-sell sequence
-                sell_order = trade['sell_order']
-                order_status = await self.get_order_status(self.symbol, sell_order.get('order_id'))
-                if order_status == 'FILLED':
-                    # Both legs executed, calculate profit in USDT
-                    buy_price = trade['buy_order']['price']
-                    sell_price = sell_order['price']
-                    quantity = sell_order['quantity']
-                    profit_usdt = (sell_price - buy_price) * quantity
-                    self.realized_profit_a += profit_usdt
-                    
-                    # Get quote asset (USDT)
-                    quote_asset = self.symbol[-4:]
-                    
-                    logging.info(f"Realized profit from buy-sell pair: ${profit_usdt:.2f} {quote_asset}")
-                    await self.update_trade_in_history(
-                        buy_price=buy_price,
-                        sell_price=sell_price,
-                        quantity=quantity,
-                        profit=profit_usdt,
-                        profit_asset=quote_asset,
-                        status='CLOSED'
-                    )
-                    self.open_trades.remove(trade)
-                    
-            elif 'sell_order' in trade and 'buy_order' in trade:
-                # This is a sell-buy sequence
-                buy_order = trade['buy_order']
-                order_status = await self.get_order_status(self.symbol, buy_order.get('order_id'))
-                if order_status == 'FILLED':
-                    # Both legs executed, calculate profit in base asset
-                    sell_price = trade['sell_order']['price']
-                    buy_price = buy_order['price']
-                    quantity = buy_order['quantity']
-                    profit_btc = quantity * ((sell_price / buy_price) - 1)
-                    self.realized_profit_b += profit_btc
-                    
-                    # Get base asset (BTC)
-                    base_asset = self.symbol[:-4]
-                    
-                    logging.info(f"Realized profit from sell-buy pair: {profit_btc:.8f} {base_asset}")
-                    await self.update_trade_in_history(
-                        buy_price=buy_price,
-                        sell_price=sell_price,
-                        quantity=quantity,
-                        profit=profit_btc,
-                        profit_asset=base_asset,
-                        status='CLOSED'
-                    )
-                    self.open_trades.remove(trade)
-
     async def update_trade_in_history(self, buy_price, sell_price, quantity, profit, profit_asset, status):
         """Updates an existing trade in the history when it is closed."""
         async with async_session() as session:
@@ -835,15 +801,8 @@ class GridStrategy:
                         })
                         break
 
-    async def get_order_status(self, symbol, order_id):
-        """Checks the status of an order from the exchange."""
-        async with self.throttler:
-            try:
-                order = await self.binance_client.get_order_async(symbol, order_id)
-                return order['status']
-            except Exception as e:
-                logging.error(f"Error fetching order status for order {order_id}: {e}")
-                return None
+
+# ENDPOINTS UTILITIES
 
     def get_total_profit_usdt(self):
         """Calculate total profit in USDT by converting profits in base asset to USDT."""
@@ -854,30 +813,61 @@ class GridStrategy:
         total_profit_usdt = self.realized_profit_a + profit_b_in_usdt
         return total_profit_usdt
 
-    def get_assets_from_symbol(self):
-        """Helper method to get base and quote assets from the trading pair symbol."""
-        return {
-            'base': self.base_asset,
-            'quote': self.quote_asset
+    def calculate_unrealized_profit_loss(self):
+        """Calculate unrealized profit or loss from open trades."""
+        unrealized_profit_a = 0
+        unrealized_profit_b = 0
+
+        # For buy positions (waiting to sell)
+        for trade in self.open_trades:
+            if 'buy_order' in trade and 'sell_order' in trade:
+                buy_price = trade['buy_order']['price']
+                quantity = trade['buy_order']['quantity']
+                # Unrealized profit in USDT
+                profit_a = (self.current_price - buy_price) * quantity
+                unrealized_profit_a += profit_a
+
+        # For sell positions (waiting to buy)
+        for trade in self.open_trades:
+            if 'sell_order' in trade and 'buy_order' in trade:
+                sell_price = trade['sell_order']['price']
+                quantity = trade['sell_order']['quantity']
+                # Unrealized profit in BTC
+                profit_b = quantity * ((sell_price / self.current_price) - 1)
+                unrealized_profit_b += profit_b
+
+        # Convert BTC unrealized profit to USDT
+        total_unrealized_profit_usdt = unrealized_profit_a + (unrealized_profit_b * self.current_price)
+
+        result = {
+            "unrealized_profit_a": unrealized_profit_a,
+            "unrealized_profit_b": unrealized_profit_b,
+            "total_unrealized_profit_usdt": total_unrealized_profit_usdt
         }
+        
+        return result
+
+
+# ENDPOINTS
 
     async def get_strategy_status(self):
         """Получает текущий статус стратегии."""
         current_time = datetime.datetime.now()
         running_time = current_time - self.start_time if hasattr(self, 'start_time') else None
         total_profit_usdt = self.get_total_profit_usdt()
-        
+        unrealized_profit = self.calculate_unrealized_profit_loss()
         return {
             "status": "active" if not self.stop_flag else "inactive",
             "current_price": self.current_price,
             "initial_price": self.initial_price,
-            "deviation": (self.current_price - self.initial_price) / self.initial_price if self.initial_price else 0,
+            "deviation": self.deviation,
             "realized_profit_a": self.realized_profit_a,
             "realized_profit_b": self.realized_profit_b,
             "total_profit_usdt": total_profit_usdt,
             "running_time": str(running_time) if running_time else None,
             "active_orders_count": len(self.active_orders),
             "completed_trades_count": len([t for t in self.trade_history if t['status'] == 'CLOSED']),
+            "unrealized_profit": unrealized_profit,
             "active_orders": [
                 {
                     "order_id": order["order_id"],
@@ -952,5 +942,41 @@ class GridStrategy:
             logging.error(f"Ошибка при запуске стратегии: {e}")
             raise e
 
+async def start_grid_strategy(parameters: dict) -> GridStrategy:
+    """
+    Создает и запускает экземпляр торговой стратегии.
+    
+    Args:
+        parameters (dict): Параметры для инициализации стратегии
+        
+    Returns:
+        GridStrategy: Запущенный экземпляр стратегии
+    """
+    try:
+        strategy = GridStrategy(**parameters)
+        asyncio.create_task(strategy.execute_strategy())
+        return strategy
+    except Exception as e:
+        logging.error(f"Ошибка при запуске grid-стратегии: {e}")
+        raise
+
+async def stop_grid_strategy(strategy: GridStrategy) -> bool:
+    """
+    Останавливает работающую стратегию.
+    
+    Args:
+        strategy (GridStrategy): Экземпляр работающей стратегии
+        
+    Returns:
+        bool: True если остановка прошла успешно
+    """
+    try:
+        strategy.stop_flag = True
+        await strategy.cancel_all_orders()
+        await strategy.close_all_sessions()
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка при остановке grid-стратегии: {e}")
+        raise
 
 
