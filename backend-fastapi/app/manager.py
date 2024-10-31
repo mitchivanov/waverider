@@ -6,7 +6,6 @@ from sqlalchemy import delete
 from sqlalchemy.future import select
 from database import async_session
 from typing import Optional, Dict, List
-from schemas.schemas import TradingParametersSchema, ActiveOrderSchema, TradeHistorySchema
 import datetime
 
 logging.basicConfig(
@@ -26,12 +25,19 @@ class TradingBotManager:
 
     @classmethod
     async def start_bot(cls, parameters: dict):
-        if await cls.is_running():
-            await cls.stop_bot()
-        
-        cls._instance = GridStrategy(**parameters)
-        cls._bot_task = asyncio.create_task(cls._instance.execute_strategy())
-        cls._start_time = datetime.datetime.now()  # Добавляем время старта
+        try:
+            if await cls.is_running():
+                await cls.stop_bot()
+            
+            cls._instance = GridStrategy(**parameters)
+            cls._bot_task = asyncio.create_task(cls._instance.start_strategy())
+            cls._start_time = datetime.datetime.now()
+            
+            logging.info("Бот успешно запущен")
+            return True
+        except Exception as e:
+            logging.error(f"Ошибка при запуске бота: {e}")
+            raise e
 
     @classmethod
     async def stop_bot(cls):
