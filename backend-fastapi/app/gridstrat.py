@@ -596,6 +596,9 @@ class GridStrategy:
                     sell_order = trade['sell_order']
                     order_status = await self.get_order_status(self.symbol, sell_order.get('order_id'))
                     if order_status == 'FILLED':
+                        # Remove order from active list
+                        await self.remove_active_order(sell_order.get('order_id'))
+                        
                         # Both legs executed, calculate profit in USDT
                         buy_price = trade['buy_order']['price']
                         sell_price = sell_order['price']
@@ -609,11 +612,12 @@ class GridStrategy:
                         logging.info(f"Realized profit from buy-sell pair: ${profit_usdt:.2f} {quote_asset}")
                         await self.update_trade_in_history(
                             buy_price=buy_price,
-                        sell_price=sell_price,
-                        quantity=quantity,
-                        profit=profit_usdt,
-                        profit_asset=quote_asset,
-                        status='CLOSED'
+                            sell_price=sell_price,
+                            quantity=quantity,
+                            profit=profit_usdt,
+                            profit_asset=quote_asset,
+                            status='CLOSED',
+                            trade_type='BUY_SELL',
                         )
                         self.open_trades.remove(trade)
                         
@@ -622,6 +626,9 @@ class GridStrategy:
                     buy_order = trade['buy_order']
                     order_status = await self.get_order_status(self.symbol, buy_order.get('order_id'))
                     if order_status == 'FILLED':
+                        # Remove order from active list
+                        await self.remove_active_order(buy_order.get('order_id'))
+                        
                         # Both legs executed, calculate profit in base asset
                         sell_price = trade['sell_order']['price']
                         buy_price = buy_order['price']
@@ -634,12 +641,13 @@ class GridStrategy:
                         
                         logging.info(f"Realized profit from sell-buy pair: {profit_btc:.8f} {base_asset}")
                         await self.update_trade_in_history(
-                        buy_price=buy_price,
-                        sell_price=sell_price,
-                        quantity=quantity,
-                        profit=profit_btc,
-                        profit_asset=base_asset,
-                        status='CLOSED'
+                            buy_price=buy_price,
+                            sell_price=sell_price,
+                            quantity=quantity,
+                            profit=profit_btc,
+                            profit_asset=base_asset,
+                            status='CLOSED',
+                            trade_type='SELL_BUY'
                         )
                         self.open_trades.remove(trade)        
             except Exception as e:
@@ -788,7 +796,7 @@ class GridStrategy:
             
             
         except Exception as e:
-            logging.error(f"Ошибка при сохранении ��ктивного ордера: {e}")
+            logging.error(f"Ошибка при сохранении активного ордера: {e}")
 
     async def update_trade_in_history(self, buy_price, sell_price, quantity, profit, profit_asset, status):
         """Updates an existing trade in the history when it is closed."""
@@ -819,6 +827,23 @@ class GridStrategy:
                             'executed_at': trade.executed_at
                         })
                         break
+
+    async def remove_active_order(self, order_id):
+        """Удаляет ордер из списка активных ордеров."""
+        try:
+            # Удаляем из базы данных
+            async with async_session() as session:
+                await session.execute(
+                    delete(ActiveOrder).where(ActiveOrder.order_id == order_id)
+                )
+                await session.commit()
+                
+            # Удаляем из списка в памяти
+            self.active_orders = [order for order in self.active_orders if order['order_id'] != order_id]
+            logging.info(f"Ордер {order_id} успешно удален из списка активных")
+            
+        except Exception as e:
+            logging.error(f"Ошибка при удалении активного ордера {order_id}: {e}")
 
 
 # ENDPOINTS UTILITIES
