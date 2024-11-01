@@ -1059,3 +1059,4 @@ async def stop_grid_strategy(strategy: GridStrategy) -> bool:
         raise
 
 
+#tratata
