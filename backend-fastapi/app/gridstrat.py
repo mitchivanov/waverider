@@ -7,7 +7,6 @@ from binance_websocket import BinanceWebSocket
 import os
 import decimal
 import time
-from typing import List, Dict, Optional
 from sqlalchemy import delete
 import datetime
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -285,7 +284,7 @@ class GridStrategy:
                         'order_type': order_type,
                         'price': price,
                         'quantity': order_size,
-                        'created_at': datetime.now().isoformat()
+                        'created_at': datetime.datetime.now()
                     })
                     
                 else:
@@ -417,7 +416,8 @@ class GridStrategy:
                                     quantity=buy['quantity'],
                                     profit=0,
                                     profit_asset=quote_asset,  # Use quote asset (USDT) for buy-sell pairs
-                                    status='OPEN'
+                                    status='OPEN',
+                                    trade_type='BUY_SELL'
                                 )
                                 # Track the open trade
                                 self.open_trades.append({
@@ -450,7 +450,8 @@ class GridStrategy:
                                     quantity=sell['quantity'],
                                     profit=0,
                                     profit_asset=base_asset,  # Use base asset (BTC) for sell-buy pairs
-                                    status='OPEN'
+                                    status='OPEN',
+                                    trade_type='SELL_BUY'
                                 )
                                 # Track the open trade
                                 self.open_trades.append({
@@ -693,34 +694,51 @@ class GridStrategy:
 
     async def add_trade_to_history(self, buy_price, sell_price, quantity, profit, profit_asset, status, trade_type):
         """Добавляет завершенную сделку в историю."""
-        trade_data = {
-            'buy_price': buy_price,
-            'sell_price': sell_price,
-            'quantity': quantity,
-            'profit': profit,
-            'profit_asset': profit_asset,
-            'status': status,
-            'trade_type': trade_type,
-            'executed_at': datetime.datetime.now()
-        }
-        
-        # Add to local history
-        self.trade_history.append(trade_data)
-        
-        # Add to the database
-        async with async_session() as session:
-            trade = TradeHistory(
-                buy_price=buy_price,
-                sell_price=sell_price,
-                quantity=quantity,
-                profit=profit,
-                profit_asset=profit_asset,
-                status=status,
-                trade_type=trade_type,
-                executed_at=datetime.datetime.now()
-            )
-            session.add(trade)
-            await session.commit()
+        try:
+            logging.info(f"Попытка добавить сделку в историю: buy_price={buy_price}, sell_price={sell_price}, quantity={quantity}")
+            
+            trade_data = {
+                'buy_price': buy_price,
+                'sell_price': sell_price,
+                'quantity': quantity,
+                'profit': profit,
+                'profit_asset': profit_asset,
+                'status': status,
+                'trade_type': trade_type,
+                'executed_at': datetime.datetime.now()
+            }
+            
+            # Add to local history
+            try:
+                self.trade_history.append(trade_data)
+                logging.debug("Сделка успешно добавлена в локальную историю")
+            except Exception as e:
+                logging.error(f"Ошибка при добавлении в локальную историю: {e}")
+                raise
+            
+            # Add to the database
+            try:
+                async with async_session() as session:
+                    trade = TradeHistory(
+                        buy_price=buy_price,
+                        sell_price=sell_price,
+                        quantity=quantity,
+                        profit=profit,
+                        profit_asset=profit_asset,
+                        status=status,
+                        trade_type=trade_type,
+                        executed_at=datetime.datetime.now()
+                    )
+                    session.add(trade)
+                    await session.commit()
+                    logging.info(f"Сделка успешно добавлена в базу данных: {trade}")
+            except Exception as e:
+                logging.error(f"Ошибка при добавлении сделки в базу данных: {e}")
+                raise
+                
+        except Exception as e:
+            logging.error(f"Критическая ошибка в add_trade_to_history: {e}")
+            raise
 
     async def add_active_order(self, order_data):
         """Добавляет активный ордер в базу данных и локальный список."""
@@ -857,6 +875,10 @@ class GridStrategy:
         running_time = current_time - self.start_time if hasattr(self, 'start_time') else None
         total_profit_usdt = self.get_total_profit_usdt()
         unrealized_profit = self.calculate_unrealized_profit_loss()
+        async with async_session() as session:
+            result = await session.execute(select(ActiveOrder))
+            active_orders = result.scalars().all()
+            active_orders_count = len(active_orders)
         return {
             "status": "active" if not self.stop_flag else "inactive",
             "current_price": self.current_price,
@@ -866,7 +888,7 @@ class GridStrategy:
             "realized_profit_b": self.realized_profit_b,
             "total_profit_usdt": total_profit_usdt,
             "running_time": str(running_time) if running_time else None,
-            "active_orders_count": len(self.active_orders),
+            "active_orders_count": active_orders_count,
             "completed_trades_count": len([t for t in self.trade_history if t['status'] == 'CLOSED']),
             "unrealized_profit": unrealized_profit,
             "active_orders": [

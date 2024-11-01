@@ -26,21 +26,21 @@ export const BotStatus: React.FC = () => {
         <div className="status-item">
           <span className="label">Статус:</span>
           <span className={`value ${status.status}`}>
-            {status.status === 'running' ? 'Работает' : 'Остановлен'}
+            {status.status === 'active' ? 'Работает' : 'Остановлен'}
           </span>
         </div>
         
         <div className="status-item">
           <span className="label">Текущая цена:</span>
           <span className="value">
-            {status.current_price ? `$${status.current_price.toFixed(2)}` : 'Н/Д'}
+            {status.current_price ? `$${status.current_price}` : 'Н/Д'}
           </span>
         </div>
 
         <div className="status-item">
           <span className="label">Отклонение:</span>
           <span className="value">
-            {status.deviation ? `${status.deviation.toFixed(2)}%` : 'Н/Д'}
+            {status.deviation ? `${status.deviation}%` : 'Н/Д'}
           </span>
           </div>
 

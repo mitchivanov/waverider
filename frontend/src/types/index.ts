@@ -30,7 +30,7 @@ export interface TradeHistory {
 }
 
 export interface BotStatus {
-    status: 'running' | 'stopped';
+    status: 'active' | 'stopped';
     current_price: number | null;
     deviation: number | null;
     

@@ -128,7 +128,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 realized_profit_a = parameters["realized_profit_a"]
                 realized_profit_b = parameters["realized_profit_b"]
                 total_profit_usdt = parameters["total_profit_usdt"]
-                
+
                 active_orders_count = parameters["active_orders_count"]
                 completed_trades_count = parameters["completed_trades_count"]
                 
@@ -163,7 +163,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         "initial_parameters": initial_parameters,
                     }
                 }
-                ws_logger.debug(f"Отправка status_update: {status_update}")
                 await manager.broadcast(status_update)
 
                 # Отправляем данные об ордерах и сделках
@@ -177,7 +176,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     }
                     for order in await TradingBotManager.get_active_orders_list()
                 ]
-                ws_logger.debug(f"Отправка active_orders_data: {len(active_orders_data)} ордеров")
 
                 all_trades_data = [
                     {
@@ -195,6 +193,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 await manager.broadcast({"type": "active_orders_data", "payload": active_orders_data})
                 await manager.broadcast({"type": "all_trades_data", "payload": all_trades_data})
+
+                # Добавляем отправку price_update
+                price_update = {
+                    "type": "price_update",
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "price": current_price
+                }
+                await manager.broadcast(price_update)
 
                 await asyncio.sleep(1)
             except Exception as e:

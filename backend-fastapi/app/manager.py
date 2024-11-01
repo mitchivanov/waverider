@@ -67,6 +67,7 @@ class TradingBotManager:
                 "realized_profit_a": parameters["realized_profit_a"],
                 "realized_profit_b": parameters["realized_profit_b"],
                 "total_profit_usdt": parameters["total_profit_usdt"],
+                
                 "running_time": parameters["running_time"],
                 
                 "active_orders_count": parameters["active_orders_count"],

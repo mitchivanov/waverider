@@ -34,8 +34,8 @@ export const TradeHistory: React.FC = () => {
           {trades.length > 0 ? (
             trades.map((trade, index) => (
               <tr key={index}>
-                <td>${trade.buy_price.toFixed(2)}</td>
-                <td>${trade.sell_price.toFixed(2)}</td>
+                <td>${trade.buy_price}</td>
+                <td>${trade.sell_price}</td>
                 <td>{trade.quantity}</td>
                 <td>${trade.profit.toFixed(2)}</td>
                 <td>{trade.profit_asset}</td>
