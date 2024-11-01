@@ -116,7 +116,6 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 parameters = await TradingBotManager.get_current_parameters()
                 if parameters is None:
-                    ws_logger.warning("Параметры не получены: бот не запущен")
                     await asyncio.sleep(1)
                     continue
                     

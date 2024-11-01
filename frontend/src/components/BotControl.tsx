@@ -3,9 +3,9 @@ import { botService } from '../services/api';
 import { TradingParameters } from '../types';
 
 const defaultParams: TradingParameters = {
-  symbol: "ETHUSDT",
-  asset_a_funds: 1000,
-  asset_b_funds: 0.1,
+  symbol: "BTCUSDT",
+  asset_a_funds: 700,
+  asset_b_funds: 0.01,
   grids: 10,
   deviation_threshold: 0.004,
   growth_factor: 0.5,

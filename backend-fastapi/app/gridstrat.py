@@ -42,8 +42,8 @@ class GridStrategy:
     ):
         # Securely retrieve API credentials from environment variables
         
-        api_key = 'hsKMdfXQ1yLis77mvU4byyGqg6999COtK2HC4BAOp59xu0YCj7YIXoymsdhlX2Uq'
-        api_secret = 'nBT901qAYhwjmPWPHCDcmey80Tu9gVhAfT8pAREy2MetF3jYChBdSgZXbhxCQO75'
+        api_key = 'BZJc21xUA8z1HzHRiRHKyppB2vWLKJBPLQWq3PLxrYh7dnbmwjeZQYtXgJGd11F7'
+        api_secret = 'Ajqsd3NBWAcjQz8XzVhUzasf0hEpRUijLYl8nB5068HHtd1tzYOb35pELb0hfged'
         
         # Ensure the API key and secret are strings
         if not isinstance(api_key, str) or not isinstance(api_secret, str):
