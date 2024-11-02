@@ -42,8 +42,8 @@ class GridStrategy:
     ):
         # Securely retrieve API credentials from environment variables
         
-        api_key = 'BZJc21xUA8z1HzHRiRHKyppB2vWLKJBPLQWq3PLxrYh7dnbmwjeZQYtXgJGd11F7'
-        api_secret = 'Ajqsd3NBWAcjQz8XzVhUzasf0hEpRUijLYl8nB5068HHtd1tzYOb35pELb0hfged'
+        api_key = 'R1iPxmWzKPragpC2XspJITGIL3wmKqDPY8znltkOLyB7c8I4xyY6LnQI7ZVR5Qd2'
+        api_secret = 'Ry4TT8syAN50NBURYsUY13cFZJ5r6NZJNAp5xkFKdFSr3uKMudxhCvlTP4eJZwCi'
         
         # Ensure the API key and secret are strings
         if not isinstance(api_key, str) or not isinstance(api_secret, str):
@@ -831,33 +831,46 @@ class GridStrategy:
     async def update_trade_in_history(self, buy_price, sell_price, quantity, profit, profit_asset, status, trade_type):
         """Updates an existing trade in the history when it is closed."""
         async with async_session() as session:
-            result = await session.execute(
-                select(TradeHistory).where(
-                    TradeHistory.buy_price == buy_price,
-                    TradeHistory.quantity == quantity,
-                    TradeHistory.status == 'OPEN'
+            try:
+                # Добавляем ORDER BY executed_at DESC чтобы получить самую последнюю сделку
+                result = await session.execute(
+                    select(TradeHistory).where(
+                        TradeHistory.buy_price == buy_price,
+                        TradeHistory.quantity == quantity,
+                        TradeHistory.status == 'OPEN'
+                    ).order_by(TradeHistory.executed_at.desc()).limit(1)
                 )
-            )
-            trade = result.scalar_one_or_none()
-            if trade:
-                trade.sell_price = sell_price
-                trade.profit = profit
-                trade.profit_asset = profit_asset
-                trade.status = status
-                trade.executed_at = datetime.datetime.utcnow()
-                await session.commit()
-                # Update in local history
-                for t in self.trade_history:
-                    if t['buy_price'] == buy_price and t['quantity'] == quantity and t['status'] == 'OPEN':
-                        t.update({
-                            'sell_price': sell_price,
-                            'profit': profit,
-                            'profit_asset': profit_asset,
-                            'status': status,
-                            'executed_at': trade.executed_at,
-                            'trade_type': trade_type
-                        })
-                        break
+                trade = result.scalar_one_or_none()
+                
+                if trade:
+                    trade.sell_price = sell_price
+                    trade.profit = profit
+                    trade.profit_asset = profit_asset
+                    trade.status = status
+                    trade.executed_at = datetime.datetime.utcnow()
+                    await session.commit()
+                    
+                    # Update in local history
+                    for t in self.trade_history:
+                        if (t['buy_price'] == buy_price and 
+                            t['quantity'] == quantity and 
+                            t['status'] == 'OPEN'):
+                            t.update({
+                                'sell_price': sell_price,
+                                'profit': profit,
+                                'profit_asset': profit_asset,
+                                'status': status,
+                                'executed_at': trade.executed_at,
+                                'trade_type': trade_type
+                            })
+                            break
+                else:
+                    logging.warning(f"No open trade found with buy_price={buy_price}, quantity={quantity}")
+                    
+            except Exception as e:
+                logging.error(f"Error updating trade history: {e}")
+                await session.rollback()
+                raise
 
     async def remove_active_order(self, order_id):
         """Удаляет ордер из списка активных ордеров."""
@@ -1053,6 +1066,7 @@ async def stop_grid_strategy(strategy: GridStrategy) -> bool:
         strategy.stop_flag = True
         await strategy.cancel_all_orders()
         await strategy.close_all_sessions()
+        logging.info("Grid strategy stopped successfully")
         return True
     except Exception as e:
         logging.error(f"Ошибка при остановке grid-стратегии: {e}")
