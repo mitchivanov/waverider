@@ -192,7 +192,7 @@ class GridStrategy:
         logging.info(f"Buy levels: {self.grid_levels['buy']}")
         logging.info(f"Sell levels: {self.grid_levels['sell']}")
 
-    async def place_limit_order(self, price, order_type, order_size, recvWindow=1000):
+    async def place_limit_order(self, price, order_type, order_size, recvWindow=2000):
         """Place a limit order with proper error handling and validation."""
         logging.info(f"Placing {order_type.upper()} order at ${price} for {order_size} units.")
         async with self.throttler:
@@ -462,7 +462,7 @@ class GridStrategy:
                                     'sell_order': {
                                         'price': sell_price,
                                         'quantity': buy['quantity'],
-                                        'order_id': sell_order['order_id'] if sell_order else None
+                                        'order_id': sell_order['orderId'] if sell_order else None
                                     },
                                     'trade_type': 'BUY_SELL'
                                 })
@@ -499,7 +499,7 @@ class GridStrategy:
                                     'buy_order': {
                                         'price': buy_price,
                                         'quantity': sell['quantity'],
-                                        'order_id': buy_order['order_id'] if buy_order else None
+                                        'order_id': buy_order['orderId'] if buy_order else None
                                     },
                                     'trade_type': 'SELL_BUY'
                                 })
