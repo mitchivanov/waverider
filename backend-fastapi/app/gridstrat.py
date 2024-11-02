@@ -42,8 +42,8 @@ class GridStrategy:
     ):
         # Securely retrieve API credentials from environment variables
         
-        api_key = 'BZJc21xUA8z1HzHRiRHKyppB2vWLKJBPLQWq3PLxrYh7dnbmwjeZQYtXgJGd11F7'
-        api_secret = 'Ajqsd3NBWAcjQz8XzVhUzasf0hEpRUijLYl8nB5068HHtd1tzYOb35pELb0hfged'
+        api_key = 'YlWpH6a39JrSXKihr51hXXybr9RZEsh7WMsKTxGsRIp1kaslF5Igv6hY6LrHjf9F'
+        api_secret = '4k2hRVjNniNMs6KE9e6Zp8gcg7ds2hDnVh6HFa6lp7L4ir1eFaGEHKjrNZjIj9XY'
         
         # Ensure the API key and secret are strings
         if not isinstance(api_key, str) or not isinstance(api_secret, str):
@@ -192,8 +192,8 @@ class GridStrategy:
         logging.info(f"Buy levels: {self.grid_levels['buy']}")
         logging.info(f"Sell levels: {self.grid_levels['sell']}")
 
-    async def place_limit_order(self, price, order_type, order_size):
-        """Place an individual limit order and log the outcome."""
+    async def place_limit_order(self, price, order_type, order_size, recvWindow=1000):
+        """Place a limit order with proper error handling and validation."""
         logging.info(f"Placing {order_type.upper()} order at ${price} for {order_size} units.")
         async with self.throttler:
             try:
@@ -255,10 +255,11 @@ class GridStrategy:
                 # Log and place the order
                 # logging.info(f"Attempting to place a single {order_type.upper()} order at ${price} for {order_size} units.")
                 order = await self.binance_client.place_order_async(
-                    self.symbol, order_type.upper(), order_size, price
+                    self.symbol, order_type.upper(), order_size, price, recvWindow=recvWindow
                 )
-                
-                if 'orderId' in order:
+
+                if order and 'orderId' in order:
+
                     # Update positions and active orders
 
                     order_id = order['orderId']
@@ -287,70 +288,103 @@ class GridStrategy:
                         'created_at': datetime.datetime.now()
                     })
                     
+                    # Return the order object
+                    return order
+                elif order and order.get('code') == -1021:  # Timestamp for this request is outside of the recvWindow
+                    # Retry with increased recvWindow
+                    logging.warning(f"RecvWindow too small, retrying with increased window")
+                    return await self.place_limit_order(price, order_type, order_size, recvWindow=5000)
                 else:
-                    # Handle API error response
+                    # Handle other API errors
                     error_code = order.get('code')
                     error_msg = order.get('msg')
                     logging.error(f"Failed to place order: {error_code} - {error_msg}")
+                    # Return None to indicate failure
+                    return None
             except Exception as e:
                 logging.error(f"Error placing {order_type.upper()} order at ${price}: {str(e)}")
+                logging.exception("Full traceback for order placement error:")
+                # Return None to indicate exception occurred
+                return None
 
     async def place_batch_orders(self):
         """Place initial buy and sell orders based on grid levels in batches."""
-        batch_size = 5  # Place orders in batches to avoid hitting rate limits
-        logging.info("Starting to place batch orders for initial grid levels.")
+        try:
+            batch_size = 5  # Place orders in batches to avoid rate limits
+            logging.info("Starting to place batch orders for initial grid levels.")
+            
+            for order_type in ['buy', 'sell']:
+                levels = self.grid_levels[order_type]
+                order_sizes = self.buy_order_sizes if order_type == 'buy' else self.sell_order_sizes
+                total_orders = len(levels)
+                successful_orders = 0
+                failed_orders = 0
+                retry_orders = []
 
-        for order_type in ['buy', 'sell']:
-            levels = self.grid_levels[order_type]
-            order_sizes = self.buy_order_sizes if order_type == 'buy' else self.sell_order_sizes
-            total_orders = len(levels)
-            successful_orders = 0
-            failed_orders = 0
+                for i in range(0, total_orders, batch_size):
+                    batch_levels = levels[i:i + batch_size]
+                    batch_sizes = order_sizes[i:i + batch_size]
+                    
+                    logging.info(f"Attempting to place batch of {len(batch_levels)} {order_type.upper()} orders "
+                               f"for levels: {batch_levels[0]:.2f} to {batch_levels[-1]:.2f}")
 
-            # Debug logging for order sizes and total orders
-            logging.debug(f"Order type: {order_type}")
-            logging.debug(f"Total orders: {total_orders}")
-            logging.debug(f"Buy order sizes: {self.buy_order_sizes}")
-            logging.debug(f"Sell order sizes: {self.sell_order_sizes}")
-            logging.debug(f"Current order sizes: {order_sizes}")
+                    for level_price, order_size in zip(batch_levels, batch_sizes):
+                        try:
+                            # Verify balance before placing order
+                            if not self.is_balance_sufficient(order_type, level_price, order_size):
+                                logging.error(f"Insufficient balance for {order_type} order at {level_price}")
+                                failed_orders += 1
+                                retry_orders.append((level_price, order_size))
+                                continue
 
-            for i in range(0, total_orders, batch_size):
-                batch_levels = levels[i:i + batch_size]
-                batch_sizes = order_sizes[i:i + batch_size]
-                logging.info(
-                    f"Attempting to place batch of {len(batch_levels)} {order_type.upper()} orders for levels: {batch_levels[0]:.2f} to {batch_levels[-1]:.2f}"
-                )
-                tasks = []
-                logging.debug(f"Entering for loop with batch_levels: {batch_levels} and batch_sizes: {batch_sizes}")
-                for level_price, order_size in zip(batch_levels, batch_sizes):
-                    logging.debug(f"Processing level_price: {level_price}, order_size: {order_size}")
-                    # Create a task to place each limit order
-                    task = self.place_limit_order(level_price, order_type, order_size)
-                    tasks.append(task)
-                    logging.info(f"Placing order at ${level_price:.2f} for {order_size} units.")
-                    logging.debug(f"Task appended: {task}")
-                logging.debug(f"Exiting for loop. Total tasks: {len(tasks)}")
-                # Execute all the tasks concurrently
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                            # Place order with increased recvWindow
+                            result = await self.place_limit_order(level_price, order_type, order_size)
+                            logging.debug(f"Binance API Response: {result}")
+                            if result and 'orderId' in result:
+                                successful_orders += 1
+                                logging.info(f"Successfully placed {order_type.upper()} order at ${level_price:.2f}")
+                            else:
+                                failed_orders += 1
+                                retry_orders.append((level_price, order_size))
+                                logging.error(f"Failed to place {order_type.upper()} order at ${level_price:.2f}")
+                                
+                        except Exception as e:
+                            failed_orders += 1
+                            retry_orders.append((level_price, order_size))
+                            logging.error(f"Error placing {order_type.upper()} order at ${level_price:.2f}: {str(e)}")
 
-                # Count successful and failed orders
-                for result in results:
-                    if isinstance(result, Exception):
-                        failed_orders += 1
-                    else:
-                        successful_orders += 1
+                    # Log batch results with correct counts
+                    logging.info(f"Placed {order_type.upper()} orders for levels: {batch_levels[0]:.2f} to {batch_levels[-1]:.2f}.")
+                    logging.info(f"Successful orders: {successful_orders}, Failed orders: {failed_orders}")
+                    
+                    # Add delay between batches
+                    await asyncio.sleep(1)
 
-                logging.info(
-                    f"Placed {order_type.upper()} orders for levels: {batch_levels[0]:.2f} to {batch_levels[-1]:.2f}."
-                )
-                logging.info(
-                    f"Successful orders: {successful_orders}, Failed orders: {failed_orders}"
-                )
-                logging.info(
-                    f"Total orders: {total_orders}, Remaining orders: {total_orders - (successful_orders + failed_orders)}"
-                )
-                await asyncio.sleep(2)  # Pause between batches to avoid rate limits
-        logging.info("All batch orders have been placed successfully.")
+                # Retry failed orders with increased recvWindow
+                if retry_orders:
+                    logging.info(f"Attempting to retry {len(retry_orders)} failed {order_type.upper()} orders")
+                    for price, size in retry_orders:
+                        try:
+                            if not self.is_balance_sufficient(order_type, price, size):
+                                logging.error(f"Insufficient balance for retry of {order_type} order at {price}")
+                                continue
+
+                            result = await self.place_limit_order(price, order_type, size, recvWindow=60000)
+                            if result and 'orderId' in result:
+                                successful_orders += 1
+                                failed_orders -= 1
+                                logging.info(f"Successfully placed retry {order_type.upper()} order at ${price:.2f}")
+                            await asyncio.sleep(0.5)
+                        except Exception as e:
+                            logging.error(f"Error in retry of {order_type.upper()} order at ${price:.2f}: {str(e)}")
+
+                # Final status check with accurate counts
+                logging.info(f"Final order placement status for {order_type.upper()}:")
+                logging.info(f"Total successful: {successful_orders}, Total failed: {failed_orders}")
+
+        except Exception as e:
+            logging.error(f"Error in place_batch_orders: {e}")
+            raise
 
     async def execute_strategy(self):
         """Execute the grid trading strategy with continuous monitoring."""
@@ -568,29 +602,45 @@ class GridStrategy:
         }
 
     def is_balance_sufficient(self, order_type, price, quantity):
-        
-    
         """Check if there is sufficient balance to place the order."""
-        account_info = self.binance_client.client.get_account()
-        balances = {balance['asset']: float(balance['free']) for balance in account_info['balances']}
+        try:
+            # Use the same synchronous method as in check_account_balance
+            account_info = self.binance_client.client.get_account()
+            balances = {
+                balance['asset']: float(balance['free']) 
+                for balance in account_info['balances']
+            }
 
-        # Extract base and quote assets from the symbol
-        base_asset = self.symbol.replace('USDT', '')  # For symbols ending with USDT
-        quote_asset = 'USDT'
+            quote_asset = self.symbol[-4:]  # e.g., 'USDT'
+            base_asset = self.symbol[:-4]   # e.g., 'BTC'
 
-        if order_type.lower() == 'buy':
-            required_funds = price * quantity  # Total cost in quote asset
-            available_funds = balances.get(quote_asset, 0)
-            if available_funds < required_funds:
-                logging.error(f"Insufficient {quote_asset} balance. Required: {required_funds}, Available: {available_funds}")
-                return False
-        elif order_type.lower() == 'sell':
-            required_quantity = quantity  # Quantity in base asset
-            available_quantity = balances.get(base_asset, 0)
-            if available_quantity < required_quantity:
-                logging.error(f"Insufficient {base_asset} balance. Required: {required_quantity}, Available: {available_quantity}")
-                return False
-        return True
+            if order_type.lower() == 'buy':
+                required_quote = price * quantity
+                available_quote = balances.get(quote_asset, 0)
+                
+                if available_quote < required_quote:
+                    logging.warning(
+                        f"Insufficient {quote_asset} balance. "
+                        f"Required: {required_quote:.8f}, Available: {available_quote:.8f}"
+                    )
+                    return False
+                    
+            elif order_type.lower() == 'sell':
+                required_base = quantity
+                available_base = balances.get(base_asset, 0)
+                
+                if available_base < required_base:
+                    logging.warning(
+                        f"Insufficient {base_asset} balance. "
+                        f"Required: {required_base:.8f}, Available: {available_base:.8f}"
+                    )
+                    return False
+
+            return True
+
+        except Exception as e:
+            logging.error(f"Error checking balance: {e}")
+            return True  # Allow the exchange to handle insufficient balance
 
     async def check_open_trades(self):
         """Periodically check if the second leg of each open trade has been executed."""
@@ -972,11 +1022,11 @@ class GridStrategy:
     async def stop_strategy(self):
         """Останавливает стратегию и очищает все ресурсы."""
         try:
-            # Устанавливаем флаг остановки
+            # Устанаввием флаг остановки
             self.stop_flag = True
             
             # Отменяем все активные ордера
-            await self.cancel_all_orders()
+            await self.cancel_all_orders() 
         
             # Очищаем локальные списки
             self.active_orders = []
@@ -1018,7 +1068,7 @@ class GridStrategy:
             
             return True
         except Exception as e:
-            logging.error(f"Ошибка при запуске стратегии: {e}")
+            logging.error(f"Ошибк при запуске стратегии: {e}")
             raise e
 
 async def start_grid_strategy(parameters: dict) -> GridStrategy:
