@@ -24,8 +24,8 @@
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 25px;
-  padding: 25px;
+  gap: 20px;
+  padding: 20px;
 }
 
 .bot-control, .bot-status, .trade-history, .active-orders {

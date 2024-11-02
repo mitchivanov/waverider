@@ -40,8 +40,10 @@ class TradingBotManager:
 
     @classmethod
     async def stop_bot(cls):
+        logging.info("Stopping bot")
         if cls._instance:
             try:
+                logging.info("Stopping grid strategy")
                 await stop_grid_strategy(cls._instance)
                 cls._instance = None
                 cls._start_time = None
@@ -50,6 +52,7 @@ class TradingBotManager:
                 logging.info("Бот успешно остановлен")
                 return True
             except Exception as e:
+            
                 logging.error(f"Ошибка при остановке бота: {e}")
                 raise
 

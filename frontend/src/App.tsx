@@ -3,7 +3,6 @@ import { BotControl } from './components/BotControl';
 import { BotStatus } from './components/BotStatus';
 import { TradeHistory } from './components/TradeHistory';
 import { ActiveOrders } from './components/ActiveOrders';
-import { botService } from './services/api';
 import { PriceChart } from './components/PriceChart';
 import './App.css';
 
@@ -14,10 +13,10 @@ function App() {
       <div className="dashboard-grid">
         <BotControl />
         <BotStatus />
-        <PriceChart />
         <ActiveOrders />
         <TradeHistory />
       </div>
+      <PriceChart />
     </div>
   );
 }

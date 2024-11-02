@@ -10,6 +10,14 @@ export interface TradingParameters {
     use_granular_distribution: boolean;
 }
 
+export interface PriceData {
+    timestamp: string; // ISO format date
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+}
+
 export interface ActiveOrder {
     order_id: string;
     order_type: 'buy' | 'sell';
