@@ -13,6 +13,7 @@ from models.models import ActiveOrder, TradeHistory
 import asyncio
 from sqlalchemy import delete
 from models.models import TradingParameters
+import json
 
 
 # Отключаем ненужные логи
@@ -99,11 +100,16 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
+        disconnected = []
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except WebSocketDisconnect:
-                await self.disconnect(connection)
+            except Exception as e:
+                ws_logger.error(f"Ошибка при отправке сообщения: {e}")
+                disconnected.append(connection)
+        for connection in disconnected:
+            self.disconnect(connection)
+
 
 manager = ConnectionManager()
 
@@ -112,14 +118,64 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     ws_logger.info(f"WebSocket подключен: {websocket.client}")
     try:
+        last_candle_time = None
+        ohlc = {
+            "open": 0.0,
+            "high": 0.0,
+            "low": float('inf'),
+            "close": 0.0,
+            "volume": 0.0
+        }
+        candle_interval = 60  # Интервал свечи в секундах (1 минута)
+
         while True:
             try:
                 parameters = await TradingBotManager.get_current_parameters()
                 if parameters is None:
                     await asyncio.sleep(1)
                     continue
-                    
                 
+                current_timestamp = int(datetime.datetime.utcnow().timestamp())
+                candle_time = current_timestamp - (current_timestamp % candle_interval)
+
+                # Инициализация начального времени свечи
+                if last_candle_time is None:
+                    last_candle_time = candle_time
+
+                # Проверка, нужно ли закрывать текущую свечу и открыть новую
+                if candle_time > last_candle_time:
+                    # Отправка завершенной свечи
+                    candle_data = {
+                        "type": "candlestick_update",
+                        "symbol": parameters["initial_parameters"]["symbol"],
+                        "data": {
+                            "time": last_candle_time,
+                            "open": ohlc["open"],
+                            "high": ohlc["high"],
+                            "low": ohlc["low"],
+                            "close": ohlc["close"],
+                            "volume": ohlc["volume"]
+                        }
+                    }
+                    await manager.broadcast(candle_data)
+                    ws_logger.debug(f"Отправлено candle_data: {json.dumps(candle_data)}")
+
+                    # Сброс OHLV для новой свечи
+                    ohlc = {
+                        "open": parameters["current_price"],
+                        "high": parameters["current_price"],
+                        "low": parameters["current_price"],
+                        "close": parameters["current_price"],
+                        "volume": 0.0  # Добавьте реализацию объема, если необходимо
+                    }
+                    last_candle_time = candle_time
+                else:
+                    # Обновление текущей свечи
+                    ohlc["close"] = parameters["current_price"]
+                    ohlc["high"] = max(ohlc["high"], parameters["current_price"])
+                    ohlc["low"] = min(ohlc["low"], parameters["current_price"])
+                    # ohlc["volume"] += trade_volume  # Обновите объем при необходимости    
+
                 status = parameters["status"]
                 current_price = parameters["current_price"]
                 deviation = parameters["deviation"]
@@ -192,14 +248,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 await manager.broadcast({"type": "active_orders_data", "payload": active_orders_data})
                 await manager.broadcast({"type": "all_trades_data", "payload": all_trades_data})
-
-                # Добавляем отправку price_update
-                price_update = {
-                    "type": "price_update",
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "price": current_price
-                }
-                await manager.broadcast(price_update)
 
                 await asyncio.sleep(1)
             except Exception as e:

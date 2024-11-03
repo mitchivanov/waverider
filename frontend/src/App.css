@@ -15,7 +15,8 @@
 .App {
   text-align: center;
   padding: 30px;
-  max-width: 1400px;
+  max-width: 80%;
+  height: 100%;
   margin: 0 auto;
   background-color: var(--bg-primary);
   color: var(--text-primary);
@@ -25,12 +26,15 @@
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 20px;
-  padding: 20px;
+}
+
+.dashboard-grid > *:last-child {
+  grid-column: 1 / -1;
+  min-height: 0;
 }
 
 .bot-control, .bot-status, .trade-history, .active-orders {
   background-color: var(--bg-secondary);
-  margin-bottom: 25px;
   padding: 25px;
   border: 1px solid var(--border-color);
   border-radius: 12px;
@@ -55,7 +59,6 @@ table {
   border-spacing: 0;
   background-color: var(--bg-tertiary);
   border-radius: 8px;
-  overflow: hidden;
 }
 
 th, td {
@@ -169,3 +172,23 @@ button:disabled {
 .stopped { color: var(--danger); }
 .positive { color: var(--success); }
 .negative { color: var(--danger); }
+
+.price-chart-container {
+  background-color: var(--bg-secondary);
+  padding: 25px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  height: 1050px;
+  width: 100%;
+}
+
+.price-chart-container {
+  position: relative;
+}
+
+.price-chart-container div {
+  position: absolute;
+  top: 0;
+  left: 0;
+}

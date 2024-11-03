@@ -15,8 +15,8 @@ function App() {
         <BotStatus />
         <ActiveOrders />
         <TradeHistory />
+        <PriceChart />
       </div>
-      <PriceChart />
     </div>
   );
 }

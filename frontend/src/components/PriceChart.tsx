@@ -1,94 +1,75 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, IChartApi, ISeriesApi, LineData, ColorType, Time } from 'lightweight-charts';
+import {
+  createChart,
+  IChartApi,
+  ISeriesApi,
+  CandlestickData,
+  ColorType,
+  Time,
+  IPriceLine,
+  PriceLineOptions,
+  LineStyle,
+} from 'lightweight-charts';
 import { botService } from '../services/api';
-import { ActiveOrder, PriceData } from '../types';
-
-interface ChartMarker {
-  time: Time;
-  position: 'aboveBar' | 'belowBar';
-  color: string;
-  shape: 'circle' | 'square' | 'arrowUp' | 'arrowDown';
-  text: string;
-}
+import { ActiveOrder } from '../types';
 
 export const PriceChart: React.FC = () => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const [priceData, setPriceData] = useState<LineData[]>([]);
+  const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const [activeOrders, setActiveOrders] = useState<ActiveOrder[]>([]);
+
+  // Ref для хранения ссылок на ценовые линии
+  const priceLinesRef = useRef<IPriceLine[]>([]);
 
   useEffect(() => {
     if (chartContainerRef.current) {
-      chartRef.current = createChart(chartContainerRef.current, {
-        width: chartContainerRef.current.clientWidth,
-        height: 800,
+      const container = chartContainerRef.current;
+      chartRef.current = createChart(container, {
+        width: container.clientWidth,
+        height: container.clientHeight,
         timeScale: {
           timeVisible: true,
           secondsVisible: false,
-          borderColor: '#D1D4DC',
-          barSpacing: 15,
-          minBarSpacing: 10,
-          fixLeftEdge: false,
-          fixRightEdge: false,
-          lockVisibleTimeRangeOnResize: false,
-          rightBarStaysOnScroll: true,
-          borderVisible: true,
-          visible: true,
-          tickMarkFormatter: (time: number) => {
-            const date = new Date(time * 1000);
-            return date.toLocaleTimeString();
-          },
         },
         rightPriceScale: {
           borderColor: '#D1D4DC',
-          borderVisible: true,
-          scaleMargins: {
-            top: 0.1,
-            bottom: 0.1,
-          },
         },
         layout: {
           background: {
             type: 'solid' as ColorType,
-            color: '#ffffff',
+            color: '#0d1117',
           },
-          textColor: '#000',
+          textColor: '#c9d1d9',
         },
         grid: {
           horzLines: {
-            color: '#F0F3FA',
+            color: '#30363d',
           },
           vertLines: {
-            color: '#F0F3FA',
+            color: '#30363d',
           },
         },
         crosshair: {
           mode: 1,
-          vertLine: {
-            width: 1,
-            color: '#2196F3',
-            style: 2,
-          },
-          horzLine: {
-            width: 1,
-            color: '#2196F3',
-            style: 2,
-          },
         },
       });
 
-      seriesRef.current = chartRef.current.addLineSeries({
-        color: '#2196F3',
-        lineWidth: 2,
-        crosshairMarkerVisible: true,
-        lastValueVisible: true,
-        priceLineVisible: true,
+      candlestickSeriesRef.current = chartRef.current.addCandlestickSeries({
+        upColor: '#4caf50',
+        downColor: '#f44336',
+        borderDownColor: '#f44336',
+        borderUpColor: '#4caf50',
+        wickDownColor: '#f44336',
+        wickUpColor: '#4caf50',
       });
 
       const handleResize = () => {
-        if (chartRef.current && chartContainerRef.current) {
-          chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
+        if (chartRef.current && container) {
+          chartRef.current.applyOptions({
+            width: container.clientWidth,
+            height: container.clientHeight,
+          });
         }
       };
 
@@ -106,25 +87,29 @@ export const PriceChart: React.FC = () => {
 
     ws.onopen = () => {
       console.log('WebSocket подключен к PriceChart');
+      // При подключении отправляем подписку на ETHUSDT, если требуется
+      ws.send(JSON.stringify({ type: 'subscribe', symbol: 'BTCUSDT' }));
     };
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      console.log('Received WebSocket data:', data);
+      console.log('Получены данные по WebSocket:', data);
 
-      if (data.type === 'price_update') {
-        const lineData: LineData = {
-          time: new Date(data.timestamp).getTime() / 1000 as Time,
-          value: data.price,
+      if (data.type === 'candlestick_update' && data.symbol === 'BTCUSDT') {
+        const candleData: CandlestickData = {
+          time: data.data.time as Time,
+          open: data.data.open,
+          high: data.data.high,
+          low: data.data.low,
+          close: data.data.close,
         };
-        setPriceData((prevData) => [...prevData, lineData]);
-        seriesRef.current?.update(lineData);
+        candlestickSeriesRef.current?.update(candleData);
       }
 
       if (data.type === 'active_orders_data') {
         const orders: ActiveOrder[] = data.payload || [];
         setActiveOrders(orders);
-        updateMarkers(orders);
+        updateGridLevels(orders);
       }
     };
 
@@ -141,31 +126,45 @@ export const PriceChart: React.FC = () => {
     };
   }, []);
 
-  const updateMarkers = (orders: ActiveOrder[]) => {
-    if (!seriesRef.current || !chartRef.current) return;
+  const updateGridLevels = (orders: ActiveOrder[]) => {
+    if (!candlestickSeriesRef.current) return;
 
-    const markers: ChartMarker[] = orders
-      .map((order): ChartMarker => ({
-        time: new Date(order.created_at || new Date()).getTime() / 1000 as Time,
-        position: order.order_type === 'buy' ? 'belowBar' : 'aboveBar',
-        color: order.order_type === 'buy' ? '#2196F3' : '#f44336',
-        shape: order.order_type === 'buy' ? 'arrowUp' : 'arrowDown',
-        text: `${order.order_type === 'buy' ? 'Buy @' : 'Sell @'} ${order.price}`,
-      }))
-      .sort((a, b) => (a.time as number) - (b.time as number));
+    // Удаляем существующие ценовые линии
+    priceLinesRef.current.forEach((line) => {
+      candlestickSeriesRef.current?.removePriceLine(line);
+    });
+    // Очищаем массив ценовых линий
+    priceLinesRef.current = [];
 
-    seriesRef.current.setMarkers(markers);
+    // Добавляем новые уровни сетки на основе активных ордеров
+    orders.forEach((order) => {
+      const priceLineOptions: PriceLineOptions = {
+        price: order.price,
+        color: order.order_type === 'buy' ? '#4caf50' : '#f44336',
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: `${order.order_type === 'buy' ? 'BUY' : 'SELL'} @ ${order.price}`,
+        lineVisible: true,
+        axisLabelColor: '#ffffff',
+        axisLabelTextColor: '#ffffff',
+      };
+      const priceLine = candlestickSeriesRef.current?.createPriceLine(priceLineOptions);
+      if (priceLine) {
+        priceLinesRef.current.push(priceLine);
+      }
+    });
   };
 
   return (
-    <div 
-      ref={chartContainerRef} 
-      style={{ 
-        width: '100%', 
-        height: '800px',
-        margin: '20px 0 60px 0',
-        padding: '0 20px'
-      }} 
-    />
+    <div className="price-chart-container" style={{ height: '500px' }}>
+      <div
+        ref={chartContainerRef}
+        style={{
+          width: '100%',
+          height: '100%',
+        }}
+      />
+    </div>
   );
 };
