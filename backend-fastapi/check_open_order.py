@@ -1,15 +1,15 @@
 from binance.client import Client
 
 # Replace with your actual Testnet API key and secret
-API_KEY = 'YlWpH6a39JrSXKihr51hXXybr9RZEsh7WMsKTxGsRIp1kaslF5Igv6hY6LrHjf9F'
-API_SECRET = '4k2hRVjNniNMs6KE9e6Zp8gcg7ds2hDnVh6HFa6lp7L4ir1eFaGEHKjrNZjIj9XY'
+api_key = 'R1iPxmWzKPragpC2XspJITGIL3wmKqDPY8znltkOLyB7c8I4xyY6LnQI7ZVR5Qd2'
+api_secret = 'Ry4TT8syAN50NBURYsUY13cFZJ5r6NZJNAp5xkFKdFSr3uKMudxhCvlTP4eJZwCi'
 
 # Use the Testnet URL
 TESTNET_URL = 'https://testnet.binance.vision/api'
 
 def check_open_orders(symbol):
     # Create a Binance client for Testnet
-    client = Client(API_KEY, API_SECRET, testnet=True)
+    client = Client(api_key, api_secret, testnet=True)
 
     try:
         # Get open orders for the specified symbol

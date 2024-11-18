@@ -5,22 +5,26 @@ import {
   ISeriesApi,
   CandlestickData,
   ColorType,
-  Time,
   IPriceLine,
   PriceLineOptions,
   LineStyle,
+  Time,
 } from 'lightweight-charts';
-import { botService } from '../services/api';
 import { ActiveOrder } from '../types';
+
+const intervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
+const symbol = 'BTCUSDT'; // Или получайте динамически
 
 export const PriceChart: React.FC = () => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const [activeOrders, setActiveOrders] = useState<ActiveOrder[]>([]);
+  const [selectedInterval, setSelectedInterval] = useState<string>('1m');
 
   // Ref для хранения ссылок на ценовые линии
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     if (chartContainerRef.current) {
@@ -83,48 +87,72 @@ export const PriceChart: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const ws = new WebSocket(botService.getWebSocketUrl());
+    // Инициализация WebSocket подключения
+    wsRef.current = new WebSocket("ws://localhost:8000/ws");
 
-    ws.onopen = () => {
-      console.log('WebSocket подключен к PriceChart');
-      // При подключении отправляем подписку на ETHUSDT, если требуется
-      ws.send(JSON.stringify({ type: 'subscribe', symbol: 'BTCUSDT' }));
+    wsRef.current.onopen = () => {
+      console.log('WebSocket подключен');
+      // Отправляем параметры подписки
+      wsRef.current?.send(JSON.stringify({
+        type: "subscribe",
+        symbol: symbol,
+        interval: selectedInterval
+      }));
     };
 
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log('Получены данные по WebSocket:', data);
+    wsRef.current.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      const type = message.type;
 
-      if (data.type === 'candlestick_update' && data.symbol === 'BTCUSDT') {
-        const candleData: CandlestickData = {
-          time: data.data.time as Time,
-          open: data.data.open,
-          high: data.data.high,
-          low: data.data.low,
-          close: data.data.close,
+      if (type === "historical_kline_data") {
+        const historicalData: CandlestickData[] = message.data.map((k: any) => ({
+          time: k.open_time / 1000, // Binance возвращает время в миллисекундах
+          open: k.open,
+          high: k.high,
+          low: k.low,
+          close: k.close,
+        }));
+        candlestickSeriesRef.current?.setData(historicalData);
+      }
+
+      if (type === "kline_data") {
+        const kline: CandlestickData = {
+          time: message.data.open_time / 1000 as Time,
+          open: message.data.open,
+          high: message.data.high,
+          low: message.data.low,
+          close: message.data.close,
         };
-        candlestickSeriesRef.current?.update(candleData);
+        candlestickSeriesRef.current?.update(kline);
       }
 
-      if (data.type === 'active_orders_data') {
-        const orders: ActiveOrder[] = data.payload || [];
-        setActiveOrders(orders);
-        updateGridLevels(orders);
+      if (type === "candlestick_update") {
+        const kline: CandlestickData = {
+          time: message.data.time / 1000 as Time,
+          open: message.data.open,
+          high: message.data.high,
+          low: message.data.low,
+          close: message.data.close,
+        };
+        candlestickSeriesRef.current?.update(kline);
       }
+
+      // Обработка других типов сообщений (status_update, active_orders_data, all_trades_data и т.д.)
+      // ...
     };
 
-    ws.onclose = () => {
-      console.log('WebSocket отключен от PriceChart');
+    wsRef.current.onclose = () => {
+      console.log('WebSocket отключен');
     };
 
-    ws.onerror = (error) => {
-      console.error('WebSocket ошибка в PriceChart:', error);
+    wsRef.current.onerror = (error) => {
+      console.error('WebSocket ошибка:', error);
     };
 
     return () => {
-      ws.close();
+      wsRef.current?.close();
     };
-  }, []);
+  }, [selectedInterval]);
 
   const updateGridLevels = (orders: ActiveOrder[]) => {
     if (!candlestickSeriesRef.current) return;
@@ -156,15 +184,45 @@ export const PriceChart: React.FC = () => {
     });
   };
 
+  const handleIntervalChange = (interval: string) => {
+    setSelectedInterval(interval);
+    // Отправляем сообщение на сервер для изменения интервала
+    wsRef.current?.send(JSON.stringify({
+      type: "change_interval",
+      interval: interval
+    }));
+  };
+
   return (
-    <div className="price-chart-container" style={{ height: '500px' }}>
-      <div
-        ref={chartContainerRef}
-        style={{
-          width: '100%',
-          height: '100%',
-        }}
-      />
+    <div>
+      <div className="interval-buttons" style={{ marginBottom: '10px' }}>
+        {intervals.map((interval) => (
+          <button
+            key={interval}
+            onClick={() => handleIntervalChange(interval)}
+            style={{
+              marginRight: '5px',
+              padding: '5px 10px',
+              backgroundColor: selectedInterval === interval ? '#4caf50' : '#f44336',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+            }}
+          >
+            {interval}
+          </button>
+        ))}
+      </div>
+      <div className="price-chart-container" style={{ height: '500px' }}>
+        <div
+          ref={chartContainerRef}
+          style={{
+            width: '100%',
+            height: '100%',
+          }}
+        />
+      </div>
     </div>
   );
 };

@@ -11,7 +11,7 @@ export interface TradingParameters {
 }
 
 export interface PriceData {
-    timestamp: string; // ISO format date
+    time: string; // ISO format date
     open: number;
     high: number;
     low: number;

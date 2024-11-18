@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, WebSocket, WebSocketDisconnect, HTTPException
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Optional, Callable
 import logging
 import uvicorn
 from gridstrat import GridStrategy
@@ -14,7 +14,9 @@ import asyncio
 from sqlalchemy import delete
 from models.models import TradingParameters
 import json
+from starlette.websockets import WebSocketState
 
+from strategies.components.kline_manager import KlineManager
 
 # Отключаем ненужные логи
 logging.getLogger('websockets').setLevel(logging.ERROR)
@@ -34,10 +36,8 @@ ws_logger.setLevel(logging.DEBUG)
 router = APIRouter()
 active_connections: Set[WebSocket] = set()
 
-
 app = FastAPI(title="Grid Trading Bot")
 app.include_router(router)
-
 
 # Настройка CORS
 app.add_middleware(
@@ -50,6 +50,10 @@ app.add_middleware(
 
 # Store bot instance
 bot_instance: Dict[str, GridStrategy] = {}
+
+# Хранилище KlineManager по WebSocket соединениям
+kline_managers: Dict[int, KlineManager] = {}
+kline_tasks: Dict[int, asyncio.Task] = {}
 
 
 @app.on_event("startup")
@@ -110,14 +114,45 @@ class ConnectionManager:
         for connection in disconnected:
             self.disconnect(connection)
 
-
 manager = ConnectionManager()
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     ws_logger.info(f"WebSocket подключен: {websocket.client}")
+    connection_id = id(websocket)  # Уникальный идентификатор для соединения
+
     try:
+        # Ожидаем получения параметров подписки от клиента
+        subscription_message = await websocket.receive_json()
+        symbol = subscription_message.get("symbol", "BTCUSDT")  # Символ по умолчанию
+        interval = subscription_message.get("interval", "1m")   # Интервал по умолчанию
+
+        # Инициализация KlineManager для этого соединения
+        async def broadcast_kline(kline: dict):
+            message = {
+                "type": "kline_data",
+                "symbol": symbol,
+                "data": kline
+            }
+            await websocket.send_json(message)
+
+        kline_manager = KlineManager(symbol=symbol, interval=interval)
+        kline_managers[connection_id] = kline_manager
+        kline_task = asyncio.create_task(kline_manager.start(broadcast_kline))
+        kline_tasks[connection_id] = kline_task
+
+        # Получение и отправка исторических свечей
+        historical_klines = await kline_manager.fetch_kline_data(limit=100)
+        if historical_klines:
+            historical_message = {
+                "type": "historical_kline_data",
+                "symbol": symbol,
+                "data": historical_klines
+            }
+            await websocket.send_json(historical_message)
+
+        # Инициализация переменных для свечей
         last_candle_time = None
         ohlc = {
             "open": 0.0,
@@ -126,14 +161,60 @@ async def websocket_endpoint(websocket: WebSocket):
             "close": 0.0,
             "volume": 0.0
         }
-        candle_interval = 60  # Интервал свечи в секундах (1 минута)
+        candle_interval = 15  # Интервал свечи в секундах (например, 15 секунд)
 
         while True:
             try:
+                
+                # WebSocketState.CLOSED (0): Соединение закрыто.
+                # WebSocketState.CONNECTING (1): Соединение устанавливается.
+                # WebSocketState.OPEN (2): Соединение открыто и активно.
+
+                # Проверяем наличие новых сообщений от клиента
+                if websocket.client_state == WebSocketState.DISCONNECTED:
+                    break
+
+                if websocket.client_state == WebSocketState.OPEN:
+                    try:
+                        message = await asyncio.wait_for(websocket.receive_json(), timeout=0.1)
+                        msg_type = message.get("type")
+                        if msg_type == "change_interval":
+                            new_interval = message.get("interval")
+                            if new_interval and new_interval != interval:
+                                interval = new_interval
+                                # Останавливаем текущий KlineManager
+                                await kline_managers[connection_id].stop()
+                                kline_tasks[connection_id].cancel()
+
+                                # Инициализируем новый KlineManager с новым интервалом
+                                kline_manager = KlineManager(symbol=symbol, interval=interval)
+                                kline_managers[connection_id] = kline_manager
+                                kline_task = asyncio.create_task(kline_manager.start(broadcast_kline))
+                                kline_tasks[connection_id] = kline_task
+
+                                # Получаем новые исторические данные для нового интервала
+                                historical_klines = await kline_manager.fetch_kline_data(limit=100)
+                                if historical_klines:
+                                    historical_message = {
+                                        "type": "historical_kline_data",
+                                        "symbol": symbol,
+                                        "data": historical_klines
+                                    }
+                                    await websocket.send_json(historical_message)
+
+                                ws_logger.info(f"Интервал изменен на {new_interval} для соединения {connection_id}")
+                    except asyncio.TimeoutError:
+                        pass  # Нет новых сообщений
+
+                # Основной цикл для отправки других данных (например, статуса, ордеров и т.д.)
                 parameters = await TradingBotManager.get_current_parameters()
                 if parameters is None:
                     await asyncio.sleep(1)
                     continue
+                
+########################################################################################################################################################################    
+                # Получеие последних свечей
+                
                 
                 current_timestamp = int(datetime.datetime.utcnow().timestamp())
                 candle_time = current_timestamp - (current_timestamp % candle_interval)
@@ -176,49 +257,40 @@ async def websocket_endpoint(websocket: WebSocket):
                     ohlc["low"] = min(ohlc["low"], parameters["current_price"])
                     # ohlc["volume"] += trade_volume  # Обновите объем при необходимости    
 
-                status = parameters["status"]
-                current_price = parameters["current_price"]
-                deviation = parameters["deviation"]
-                
-                realized_profit_a = parameters["realized_profit_a"]
-                realized_profit_b = parameters["realized_profit_b"]
-                total_profit_usdt = parameters["total_profit_usdt"]
 
-                active_orders_count = parameters["active_orders_count"]
-                completed_trades_count = parameters["completed_trades_count"]
-                
-                unrealized_profit_a = parameters["unrealized_profit_a"]
-                unrealized_profit_b = parameters["unrealized_profit_b"]
-                unrealized_profit_usdt = parameters["unrealized_profit_usdt"]
-                
-                running_time = parameters["running_time"]
-                
-                initial_parameters = parameters["initial_parameters"]
+
+
+########################################################################################################################################################################    
+
+
+
+
                 # Отправляем статус
                 status_update = {
                     "type": "status_update",
                     "data": {
-                        "status": status,
-                        "current_price": current_price,
-                        "deviation": deviation,
+                        "status": parameters["status"],
+                        "current_price": parameters["current_price"],
+                        "deviation": parameters["deviation"],
                         
-                        "realized_profit_a": realized_profit_a,
-                        "realized_profit_b": realized_profit_b,
-                        "total_profit_usdt": total_profit_usdt,
+                        "realized_profit_a": parameters["realized_profit_a"],
+                        "realized_profit_b": parameters["realized_profit_b"],
+                        "total_profit_usdt": parameters["total_profit_usdt"],
                         
-                        "active_orders_count": active_orders_count,
-                        "completed_trades_count": completed_trades_count,
+                        "active_orders_count": parameters["active_orders_count"],
+                        "completed_trades_count": parameters["completed_trades_count"],
                         
-                        "running_time": running_time,
+                        "running_time": parameters["running_time"],
 
-                        "unrealized_profit_a": unrealized_profit_a,
-                        "unrealized_profit_b": unrealized_profit_b,
-                        "unrealized_profit_usdt": unrealized_profit_usdt,
+                        "unrealized_profit_a": parameters["unrealized_profit_a"],
+                        "unrealized_profit_b": parameters["unrealized_profit_b"],
+                        "unrealized_profit_usdt": parameters["unrealized_profit_usdt"],
                         
-                        "initial_parameters": initial_parameters,
+                        "initial_parameters": parameters["initial_parameters"],
                     }
                 }
                 await manager.broadcast(status_update)
+                ws_logger.debug(f"Отправлено status_update: {json.dumps(status_update)}")
 
                 # Отправляем данные об ордерах и сделках
                 active_orders_data = [
@@ -247,7 +319,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 ]
 
                 await manager.broadcast({"type": "active_orders_data", "payload": active_orders_data})
+                ws_logger.debug(f"Отправлено active_orders_data: {json.dumps(active_orders_data)}")
+                
                 await manager.broadcast({"type": "all_trades_data", "payload": all_trades_data})
+                ws_logger.debug(f"Отправлено all_trades_data: {json.dumps(all_trades_data)}")
 
                 await asyncio.sleep(1)
             except Exception as e:
@@ -256,9 +331,18 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         ws_logger.info(f"WebSocket отключен: {websocket.client}")
         manager.disconnect(websocket)
+    except Exception as e:
+        ws_logger.error(f"Ошибка WebSocket: {e}", exc_info=True)
     finally:
         ws_logger.info(f"WebSocket соединение закрыто: {websocket.client}")
         manager.disconnect(websocket)
+        # Останавливаем KlineManager для этого соединения
+        if connection_id in kline_managers:
+            await kline_managers[connection_id].stop()
+            del kline_managers[connection_id]
+        if connection_id in kline_tasks:
+            kline_tasks[connection_id].cancel()
+            del kline_tasks[connection_id]
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -268,7 +352,16 @@ async def shutdown_event():
             await bot_instance["bot"].close()
         except Exception as e:
             logging.error(f"Error during shutdown: {e}")
-
+    
+    # Останавливаем все KlineManager
+    for manager_instance in kline_managers.values():
+        await manager_instance.stop()
+    for task in kline_tasks.values():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 async def clear_database():
     """Очищает все таблицы в базе данных."""
     async with async_session() as session:
@@ -286,3 +379,4 @@ async def clear_database():
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+

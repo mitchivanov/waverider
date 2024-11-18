@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import async_session
 from models.models import TradeHistory, ActiveOrder
 from sqlalchemy import update
+from utils import OrderService
 
 # Configure logging for the entire application
 logging.basicConfig(
@@ -81,6 +82,13 @@ class GridStrategy:
         # Extract and store base and quote assets
         self.base_asset = self.symbol[:-4]   # e.g., 'BTC' from 'BTCUSDT'
         self.quote_asset = self.symbol[-4:]  # e.g., 'USDT' from 'BTCUSDT'
+
+        self.order_service = OrderService(
+            binance_client=self.binance_client, 
+            symbol=self.symbol,
+            asset_a_funds=self.asset_a_funds,
+            asset_b_funds=self.asset_b_funds
+        )
 
         # Check account balance
         self.check_account_balance()
@@ -194,118 +202,7 @@ class GridStrategy:
 
     async def place_limit_order(self, price, order_type, order_size, recvWindow=2000):
         """Place a limit order with proper error handling and validation."""
-        logging.info(f"Placing {order_type.upper()} order at ${price} for {order_size} units.")
-        async with self.throttler:
-            try:
-                # Perform a balance check before placing the order
-                if not self.is_balance_sufficient(order_type, price, order_size):
-                    logging.error(f"Insufficient balance to place {order_type.upper()} order at ${price} for {order_size} units.")
-                    return
-
-                # Retrieve exchange info
-                exchange_info = self.binance_client.client.get_symbol_info(self.symbol)
-                if exchange_info is None:
-                    logging.error(f"Exchange information for symbol {self.symbol} not found.")
-                    return
-
-                # Extract filters
-                filters = self.extract_filters(exchange_info)
-                if filters is None:
-                    logging.error(f"Could not extract filters for symbol {self.symbol}.")
-                    return
-
-                # Unpack filter values
-                min_price = filters['min_price']
-                max_price = filters['max_price']
-                tick_size = filters['tick_size']
-                min_qty = filters['min_qty']
-                max_qty = filters['max_qty']
-                step_size = filters['step_size']
-                min_notional = filters['min_notional']
-                max_notional = filters['max_notional']
-
-                # Function to calculate decimals based on tick size or step size
-                def decimals(value):
-                    return decimal.Decimal(str(value)).as_tuple().exponent * -1
-
-                # Adjust price
-                price_decimals = decimals(tick_size)
-                price = round(price, price_decimals)
-
-                # Adjust quantity
-                qty_decimals = decimals(step_size)
-                order_size = round(order_size, qty_decimals)
-
-                # Ensure price is within min and max price
-                if price < min_price or price > max_price:
-                    logging.error(f"Price {price} is outside the allowed range ({min_price} - {max_price}).")
-                    return
-
-                # Ensure quantity is within min and max quantity
-                if order_size < min_qty or order_size > max_qty:
-                    logging.error(f"Quantity {order_size} is outside the allowed range ({min_qty} - {max_qty}).")
-                    return
-
-                # Ensure order notional is within min and max notional
-                notional = price * order_size
-                if notional < min_notional or notional > max_notional:
-                    logging.error(f"Order notional ({notional}) is outside the allowed range ({min_notional} - {max_notional}).")
-                    return
-
-                # Log and place the order
-                # logging.info(f"Attempting to place a single {order_type.upper()} order at ${price} for {order_size} units.")
-                order = await self.binance_client.place_order_async(
-                    self.symbol, order_type.upper(), order_size, price, recvWindow=recvWindow
-                )
-
-                if order and 'orderId' in order:
-
-                    # Update positions and active orders
-
-                    order_id = order['orderId']
-                    
-                    if order_type.lower() == 'buy':
-                        self.buy_positions.append({'price': price, 'quantity': order_size, 'order_id': order_id})
-                    elif order_type.lower() == 'sell':
-                        self.sell_positions.append({'price': price, 'quantity': order_size, 'order_id': order_id})
-                    
-                    order_data = {
-                        'order_id': order_id,
-                        'order_type': order_type,
-                        'price': price,
-                        'quantity': order_size
-                    }
-
-                    # Add to database
-                    await self.add_active_order(order_data)
-                    
-                    # Add to memory list
-                    self.active_orders.append({
-                        'order_id': order_id,
-                        'order_type': order_type,
-                        'price': price,
-                        'quantity': order_size,
-                        'created_at': datetime.datetime.now()
-                    })
-                    
-                    # Return the order object
-                    return order
-                elif order and order.get('code') == -1021:  # Timestamp for this request is outside of the recvWindow
-                    # Retry with increased recvWindow
-                    logging.warning(f"RecvWindow too small, retrying with increased window")
-                    return await self.place_limit_order(price, order_type, order_size, recvWindow=5000)
-                else:
-                    # Handle other API errors
-                    error_code = order.get('code')
-                    error_msg = order.get('msg')
-                    logging.error(f"Failed to place order: {error_code} - {error_msg}")
-                    # Return None to indicate failure
-                    return None
-            except Exception as e:
-                logging.error(f"Error placing {order_type.upper()} order at ${price}: {str(e)}")
-                logging.exception("Full traceback for order placement error:")
-                # Return None to indicate exception occurred
-                return None
+        return await self.order_service.place_limit_order(price, order_type, order_size, recvWindow)
 
     async def place_batch_orders(self):
         """Place initial buy and sell orders based on grid levels in batches."""

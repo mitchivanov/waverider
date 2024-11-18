@@ -43,3 +43,20 @@ class TradeHistory(SQLModel, table=True):
             datetime: lambda v: v.isoformat()
         }
         arbitrary_types_allowed = True
+
+class OrderHistory(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    order_id: str = Field(index=True)
+    order_type: str  # 'buy' или 'sell'
+    price: float
+    quantity: float
+    status: str  # 'OPEN', 'CLOSED', 'CANCELLED' и т.д.
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Config:
+        table_name = "order_history"
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+        arbitrary_types_allowed = True
