@@ -15,7 +15,7 @@ class KlineManager:
         self.running = False
         self.logger = logging.getLogger('kline_manager')
 
-    async def fetch_kline_data(self, limit: int = 1) -> Optional[List[dict]]:
+    async def fetch_kline_data(self, limit: int = 100) -> Optional[List[dict]]:
         """Получает последние данные Kline для указанного символа и интервала."""
         params = {
             'symbol': self.symbol,

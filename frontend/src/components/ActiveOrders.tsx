@@ -25,6 +25,7 @@ export const ActiveOrders: React.FC = () => {
           <tr>
             <th>ID</th>
             <th>Type</th>
+            <th>Initial</th>
             <th>Price</th>
             <th>Quantity</th>
             <th>Created</th>
@@ -36,6 +37,7 @@ export const ActiveOrders: React.FC = () => {
               <tr key={order.order_id}>
                 <td>{order.order_id}</td>
                 <td>{order.order_type}</td>
+                <td>{order.isInitial ? 'Yes' : 'No'}</td>
                 <td>${order.price.toFixed(2)}</td>
                 <td>{order.quantity}</td>
                 <td>{order.created_at}</td>

@@ -18,6 +18,7 @@ class TradingParameters(SQLModel, table=True):
 class ActiveOrder(SQLModel, table=True):
     order_id: str = Field(primary_key=True)
     order_type: str = Field(index=True)
+    isInitial: bool = Field(index=True)
     price: float
     quantity: float
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -35,6 +36,8 @@ class TradeHistory(SQLModel, table=True):
     profit_asset: Optional[str] = Field(default=None)
     status: str = Field(default='OPEN')
     trade_type: str = Field(default='LIMIT')
+    buy_order_id: Optional[str] = Field(default=None)
+    sell_order_id: Optional[str] = Field(default=None)
     executed_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:

@@ -27,6 +27,11 @@ export const TradeHistory: React.FC = () => {
             <th>Sell Price</th>
             <th>Quantity</th>
             <th>Profit</th>
+            <th>Profit Asset</th>
+            <th>Status</th>
+            <th>Trade Type</th>
+            <th>Buy Order ID</th>
+            <th>Sell Order ID</th>
             <th>Time</th>
           </tr>
         </thead>
@@ -41,6 +46,8 @@ export const TradeHistory: React.FC = () => {
                 <td>{trade.profit_asset}</td>
                 <td>{trade.status}</td>
                 <td>{trade.trade_type}</td>
+                <td>{trade.buy_order_id}</td>
+                <td>{trade.sell_order_id}</td>
                 <td>{trade.executed_at}</td>
               </tr>
             ))

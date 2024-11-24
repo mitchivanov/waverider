@@ -105,40 +105,43 @@ export const PriceChart: React.FC = () => {
       const type = message.type;
 
       if (type === "historical_kline_data") {
-        const historicalData: CandlestickData[] = message.data.map((k: any) => ({
-          time: k.open_time / 1000, // Binance возвращает время в миллисекундах
-          open: k.open,
-          high: k.high,
-          low: k.low,
-          close: k.close,
-        }));
+        const historicalData: CandlestickData[] = message.data
+          .map((k: any) => ({
+            time: k.open_time / 1000,
+            open: k.open,
+            high: k.high,
+            low: k.low,
+            close: k.close,
+          }))
+          .sort((a: CandlestickData, b: CandlestickData) => 
+            Number(a.time) - Number(b.time)
+          )
+          .slice(-100);
+        
         candlestickSeriesRef.current?.setData(historicalData);
       }
 
-      if (type === "kline_data") {
+      if (type === "active_orders_data") {
+        const orders = message.payload || [];
+        setActiveOrders(orders);
+        updateGridLevels(orders);
+      }
+
+      if (type === "kline_data" || type === "candlestick_update") {
         const kline: CandlestickData = {
-          time: message.data.open_time / 1000 as Time,
+          time: (type === "kline_data" ? message.data.open_time : message.data.time) / 1000 as Time,
           open: message.data.open,
           high: message.data.high,
           low: message.data.low,
           close: message.data.close,
         };
-        candlestickSeriesRef.current?.update(kline);
+        
+        try {
+          candlestickSeriesRef.current?.update(kline);
+        } catch (error) {
+          console.warn('Ошибка при обновлении данных свечи:', error);
+        }
       }
-
-      if (type === "candlestick_update") {
-        const kline: CandlestickData = {
-          time: message.data.time / 1000 as Time,
-          open: message.data.open,
-          high: message.data.high,
-          low: message.data.low,
-          close: message.data.close,
-        };
-        candlestickSeriesRef.current?.update(kline);
-      }
-
-      // Обработка других типов сообщений (status_update, active_orders_data, all_trades_data и т.д.)
-      // ...
     };
 
     wsRef.current.onclose = () => {
