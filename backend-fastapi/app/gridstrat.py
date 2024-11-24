@@ -479,81 +479,163 @@ class GridStrategy:
                     # Define tasks for checking buy and sell orders
                     async def check_buy_orders():
                         for buy in list(self.buy_positions):
-                            if self.current_price <= buy['price']:
-                                logging.info(f"Buy order filled at price ${buy['price']:.2f}")
-                                # Remove the filled buy order from active orders
-                                await self.remove_active_order(buy['order_id'])
-                                
-                                # Place the corresponding sell order
-                                sell_price = buy['price'] + ((self.deviation_threshold / self.grids) * self.initial_price)
-                                sell_order = await self.place_limit_order(price=sell_price, order_type='sell', isInitial=False, order_size=buy['quantity'])
-                                self.buy_positions.remove(buy)
-
-                                # Get the quote asset (USDT) from the trading pair
-                                quote_asset = self.symbol[-4:]  # e.g., 'USDT' from 'BTCUSDT'
-                                
-                                # Record the trade as 'OPEN' with zero profit
-                                await self.add_trade_to_history(
-                                    buy_price=buy['price'],
-                                    sell_price=None,
-                                    quantity=buy['quantity'],
-                                    profit=0,
-                                    profit_asset=quote_asset,  # Use quote asset (USDT) for buy-sell pairs
-                                    status='OPEN',
-                                    trade_type='BUY_SELL',
-                                    buy_order_id=buy['order_id'],
-                                    sell_order_id=sell_order['orderId'] if sell_order else None
-                                )
-                                # Track the open trade
-                                self.open_trades.append({
-                                    'buy_order': buy,
-                                    'sell_order': {
-                                        'price': sell_price,
-                                        'quantity': buy['quantity'],
-                                        'order_id': sell_order['orderId'] if sell_order else None
-                                    },
-                                    'trade_type': 'BUY_SELL'
-                                })
-                                logging.info(f"Placed corresponding sell order at price ${sell_price:.2f}")
+                            try:
+                                if self.current_price <= buy['price']:
+                                    await self.trades_logger.log(f"Buy order filled at price ${buy['price']:.2f}")
+                                    
+                                    # Удаление ордера с повторными попытками
+                                    max_retries = 3
+                                    retry_count = 0
+                                    while retry_count < max_retries:
+                                        try:
+                                            await self.remove_active_order(buy['order_id'])
+                                            break
+                                        except Exception as e:
+                                            retry_count += 1
+                                            if retry_count == max_retries:
+                                                await self.trades_logger.log(f"Failed to remove active order after {max_retries} attempts: {e}")
+                                                continue
+                                            await asyncio.sleep(1 * retry_count)  # Увеличивающаяся задержка
+                                    
+                                    # Размещение соответствующего ордера на продажу
+                                    sell_price = buy['price'] + ((self.deviation_threshold / self.grids) * self.initial_price)
+                                    
+                                    retry_count = 0
+                                    sell_order = None
+                                    while retry_count < max_retries:
+                                        try:
+                                            sell_order = await self.place_limit_order(
+                                                price=sell_price, 
+                                                order_type='sell', 
+                                                isInitial=False, 
+                                                order_size=buy['quantity']
+                                            )
+                                            if sell_order and 'orderId' in sell_order:
+                                                break
+                                        except Exception as e:
+                                            retry_count += 1
+                                            if retry_count == max_retries:
+                                                await self.trades_logger.log(f"Failed to place sell order after {max_retries} attempts: {e}")
+                                                continue
+                                            await asyncio.sleep(1 * retry_count)
+                                    
+                                    if sell_order and 'orderId' in sell_order:
+                                        try:
+                                            self.buy_positions.remove(buy)
+                                            quote_asset = self.symbol[-4:]
+                                            
+                                            # Запись в историю торгов
+                                            await self.add_trade_to_history(
+                                                buy_price=buy['price'],
+                                                sell_price=sell_price,
+                                                quantity=buy['quantity'],
+                                                profit=0,
+                                                profit_asset=quote_asset,
+                                                status='OPEN',
+                                                trade_type='BUY_SELL',
+                                                buy_order_id=buy['order_id'],
+                                                sell_order_id=sell_order['orderId']
+                                            )
+                                            
+                                            # Отслеживание открытой сделки
+                                            self.open_trades.append({
+                                                'buy_order': buy,
+                                                'sell_order': {
+                                                    'price': sell_price,
+                                                    'quantity': buy['quantity'],
+                                                    'order_id': sell_order['orderId']
+                                                },
+                                                'trade_type': 'BUY_SELL'
+                                            })
+                                            await self.trades_logger.log(f"Successfully placed corresponding sell order at price ${sell_price}")
+                                        except Exception as e:
+                                            await self.trades_logger.log(f"Error processing trade data: {e}")
+                                    else:
+                                        await self.trades_logger.log("Failed to place sell order - skipping trade processing")
+                                        
+                            except Exception as e:
+                                await self.trades_logger.log(f"Error in check_buy_orders: {e}")
+                                continue
 
                     async def check_sell_orders():
                         for sell in list(self.sell_positions):
-                            if self.current_price >= sell['price']:
-                                logging.info(f"Sell order filled at price ${sell['price']:.2f}")
-                                # Remove the filled sell order from active orders
-                                await self.remove_active_order(sell['order_id'])
-                                
-                                # Place the corresponding buy order
-                                buy_price = sell['price'] - ((self.deviation_threshold / self.grids) * self.initial_price)
-                                buy_order = await self.place_limit_order(price=buy_price, order_type='buy', isInitial=False, order_size=sell['quantity'])
-                                self.sell_positions.remove(sell)
-                                
-                                # Get the base asset (BTC) from the trading pair
-                                base_asset = self.symbol[:-4]  # e.g., 'BTC' from 'BTCUSDT'
-                                
-                                # Record the trade as 'OPEN' with zero profit
-                                await self.add_trade_to_history(
-                                    buy_price=None,
-                                    sell_price=sell['price'],
-                                    quantity=sell['quantity'],
-                                    profit=0,
-                                    profit_asset=base_asset,  # Use base asset (BTC) for sell-buy pairs
-                                    status='OPEN',
-                                    trade_type='SELL_BUY',
-                                    buy_order_id=buy_order['orderId'] if buy_order else None,
-                                    sell_order_id=sell['order_id']
-                                )
-                                # Track the open trade
-                                self.open_trades.append({
-                                    'sell_order': sell,
-                                    'buy_order': {
-                                        'price': buy_price,
-                                        'quantity': sell['quantity'],
-                                        'order_id': buy_order['orderId'] if buy_order else None
-                                    },
-                                    'trade_type': 'SELL_BUY'
-                                })
-                                logging.info(f"Placed corresponding buy order at price ${buy_price:.2f}")
+                            try:
+                                if self.current_price >= sell['price']:
+                                    await self.trades_logger.log(f"Sell order filled at price ${sell['price']:.2f}")
+                                    
+                                    # Удаление ордера с повторными попытками
+                                    max_retries = 3
+                                    retry_count = 0
+                                    while retry_count < max_retries:
+                                        try:
+                                            await self.remove_active_order(sell['order_id'])
+                                            break
+                                        except Exception as e:
+                                            retry_count += 1
+                                            if retry_count == max_retries:
+                                                await self.trades_logger.log(f"Failed to remove active order after {max_retries} attempts: {e}")
+                                                continue
+                                            await asyncio.sleep(1 * retry_count)
+                                    
+                                    # Размещение соответствующего ордера на покупку
+                                    buy_price = sell['price'] - ((self.deviation_threshold / self.grids) * self.initial_price)
+                                    
+                                    retry_count = 0
+                                    buy_order = None
+                                    while retry_count < max_retries:
+                                        try:
+                                            buy_order = await self.place_limit_order(
+                                                price=buy_price, 
+                                                order_type='buy', 
+                                                isInitial=False, 
+                                                order_size=sell['quantity']
+                                            )
+                                            if buy_order and 'orderId' in buy_order:
+                                                break
+                                        except Exception as e:
+                                            retry_count += 1
+                                            if retry_count == max_retries:
+                                                await self.trades_logger.log(f"Failed to place buy order after {max_retries} attempts: {e}")
+                                                continue
+                                            await asyncio.sleep(1 * retry_count)
+                                    
+                                    if buy_order and 'orderId' in buy_order:
+                                        try:
+                                            self.sell_positions.remove(sell)
+                                            base_asset = self.symbol[:-4]
+                                            
+                                            # Запись в историю торгов
+                                            await self.add_trade_to_history(
+                                                buy_price=buy_price,
+                                                sell_price=sell['price'],
+                                                quantity=sell['quantity'],
+                                                profit=0,
+                                                profit_asset=base_asset,
+                                                status='OPEN',
+                                                trade_type='SELL_BUY',
+                                                buy_order_id=buy_order['orderId'],
+                                                sell_order_id=sell['order_id']
+                                            )
+                                            
+                                            # Отслеживание открытой сделки
+                                            self.open_trades.append({
+                                                'sell_order': sell,
+                                                'buy_order': {
+                                                    'price': buy_price,
+                                                    'quantity': sell['quantity'],
+                                                    'order_id': buy_order['orderId']
+                                                },
+                                                'trade_type': 'SELL_BUY'
+                                            })
+                                            await self.trades_logger.log(f"Successfully placed corresponding buy order at price ${buy_price}")
+                                        except Exception as e:
+                                            await self.trades_logger.log(f"Error processing trade data: {e}")
+                                    else:
+                                        await self.trades_logger.log("Failed to place buy order - skipping trade processing")
+                                        
+                            except Exception as e:
+                                await self.trades_logger.log(f"Error in check_sell_orders: {e}")
+                                continue
 
                     await asyncio.gather(check_buy_orders(), check_sell_orders())
                                         
@@ -883,7 +965,7 @@ class GridStrategy:
             raise
 
     async def add_active_order(self, order_data):
-        """Добавляет активный ордер в базу данных и локальный список."""
+        """Добавляет активный орде в базу данных и локальный список."""
         try:
             # Создаем объект ActiveOrder
             active_order = ActiveOrder(
