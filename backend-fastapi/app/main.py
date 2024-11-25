@@ -16,7 +16,7 @@ from models.models import TradingParameters
 import json
 from starlette.websockets import WebSocketState
 
-from strategies.components.kline_manager import KlineManager
+from kline_manager import KlineManager
 
 # Отключаем ненужные логи
 logging.getLogger('websockets').setLevel(logging.ERROR)

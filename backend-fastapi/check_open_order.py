@@ -26,7 +26,7 @@ def main():
     if open_orders:
         print(f"Number of open orders for {symbol}: {len(open_orders)}")
         for order in open_orders:
-            print(f"Order ID: {order['orderId']}, Price: {order['price']}, Quantity: {order['origQty']}")
+            print(f"Order ID: {order['orderId']}, Price: {order['price']}, Quantity: {order['origQty']}, Side: {order['side']}")
     else:
         print(f"No open orders for {symbol}.")
 

@@ -33,31 +33,53 @@ class AsyncLogger:
         self.filename = filename
         self.queue = asyncio.Queue(maxsize=max_queue_size)
         self.running = True
-        # Создаем директорию logs если её нет
+        
+        # Create logs directory if it doesn't exist
         os.makedirs(os.path.dirname(filename), exist_ok=True)
-        # Запускаем процесс записи логов
+        
+        # Start the logging process
         asyncio.create_task(self._process_logs())
+
+    async def _write_immediately(self, message):
+        """Immediate writing to the log file"""
+        try:
+            async with aiofiles.open(self.filename, mode='a') as f:
+                await f.write(message)
+        except Exception as e:
+            print(f"Critical error writing to log: {e}")
+            
+    async def fatal(self, message):
+        """logging and immediate exit"""
+        formatted_message = f"[{datetime.datetime.now().isoformat()}] [FATAL] {message}\n"
+        await self._write_immediately(formatted_message)
+        os._exit(1)  # Immediate exit
+        
+    async def panic(self, message):
+        """logging and raising panic"""
+        formatted_message = f"[{datetime.datetime.now().isoformat()}] [PANIC] {message}\n"
+        await self._write_immediately(formatted_message)
+        raise RuntimeError(f"Panic: {message}")
         
     async def log(self, message):
-        """Добавляет сообщение в очередь логов"""
-        await self.queue.put(f"[{datetime.datetime.now().isoformat()}] {message}\n")
+        """logging a message"""
+        await self.queue.put(f"[{datetime.datetime.now().isoformat()}] [INFO] {message}\n")
         
     async def _process_logs(self):
-        """Обрабатывает очередь логов и записывает их в файл"""
+        """Processes the log queue and writes messages to the file"""
         while self.running:
             try:
-                # Собираем все доступные логи
+                # Collect all available logs
                 messages = []
                 messages.append(await self.queue.get())
                 
-                # Проверяем есть ли ещё логи в очереди
+                # Check if there are any more logs in the queue
                 while not self.queue.empty() and len(messages) < 100:
                     try:
                         messages.append(self.queue.get_nowait())
                     except asyncio.QueueEmpty:
                         break
                 
-                # Записываем все собранные логи разом
+                # Write all collected logs at once
                 async with aiofiles.open(self.filename, mode='a') as f:
                     await f.writelines(messages)
                     
@@ -66,9 +88,9 @@ class AsyncLogger:
                 await asyncio.sleep(1)
                 
     async def close(self):
-        """Закрывает логгер"""
+        """Closes the logger"""
         self.running = False
-        # Дожидаемся обработки оставшихся логов
+        # Wait for the remaining logs to be processed
         while not self.queue.empty():
             await asyncio.sleep(0.1)
 
@@ -372,7 +394,7 @@ class GridStrategy:
                     batch_sizes = order_sizes[i:i + batch_size]
                     
                     logging.info(f"Attempting to place batch of {len(batch_levels)} {order_type.upper()} orders "
-                               f"for levels: {batch_levels[0]:.2f} to {batch_levels[-1]:.2f}")
+                               f"for levels: {batch_levels[0]} to {batch_levels[-1]}")
 
                     for level_price, order_size in zip(batch_levels, batch_sizes):
                         try:
@@ -388,19 +410,19 @@ class GridStrategy:
                             logging.debug(f"Binance API Response: {result}")
                             if result and 'orderId' in result:
                                 successful_orders += 1
-                                logging.info(f"Successfully placed {order_type.upper()} order at ${level_price:.2f}")
+                                logging.info(f"Successfully placed {order_type.upper()} order at ${level_price}")
                             else:
                                 failed_orders += 1
                                 retry_orders.append((level_price, order_size))
-                                logging.error(f"Failed to place {order_type.upper()} order at ${level_price:.2f}")
+                                logging.error(f"Failed to place {order_type.upper()} order at ${level_price}")
                                 
                         except Exception as e:
                             failed_orders += 1
                             retry_orders.append((level_price, order_size))
-                            logging.error(f"Error placing {order_type.upper()} order at ${level_price:.2f}: {str(e)}")
+                            logging.error(f"Error placing {order_type.upper()} order at ${level_price}: {str(e)}")
 
                     # Log batch results with correct counts
-                    logging.info(f"Placed {order_type.upper()} orders for levels: {batch_levels[0]:.2f} to {batch_levels[-1]:.2f}.")
+                    logging.info(f"Placed {order_type.upper()} orders for levels: {batch_levels[0]} to {batch_levels[-1]}.")
                     logging.info(f"Successful orders: {successful_orders}, Failed orders: {failed_orders}")
                     
                     # Add delay between batches
@@ -419,10 +441,10 @@ class GridStrategy:
                             if result and 'orderId' in result:
                                 successful_orders += 1
                                 failed_orders -= 1
-                                logging.info(f"Successfully placed retry {order_type.upper()} order at ${price:.2f}")
+                                logging.info(f"Successfully placed retry {order_type.upper()} order at ${price}")
                             await asyncio.sleep(0.5)
                         except Exception as e:
-                            logging.error(f"Error in retry of {order_type.upper()} order at ${price:.2f}: {str(e)}")
+                            logging.error(f"Error in retry of {order_type.upper()} order at ${price}: {str(e)}")
 
                 # Final status check with accurate counts
                 logging.info(f"Final order placement status for {order_type.upper()}:")
@@ -448,40 +470,45 @@ class GridStrategy:
             last_checked_price = None  # Track the last checked price
             
             while not self.stop_flag:
-                start_time = time.time()  # Record the start time of the loop
-
-                # Log message indicating waiting for price update
-                logging.info("Waiting for current price to update...")
-
+                
                 # Ensure the current price is updated
                 if self.current_price is not None and self.current_price != last_checked_price:
-                    last_checked_price = self.current_price  # Update the last checked price
+                    last_checked_price = self.current_price
 
                     if self.initial_price is None:
-                        self.initial_price = self.current_price
-                        logging.info(f"Initial price set to ${self.initial_price:.2f}. Calculating grid levels and order sizes.")
                         
-                        # Calculate grid levels first
+                        # Step 1: Set initial price
+                        self.initial_price = self.current_price
+                        await self.trades_logger.log(f"Initial price set to ${self.initial_price}. Calculating grid levels and order sizes.")
+                        
+                        # Step 2: Calculate grid levels first
+                        await self.trades_logger.log(f"Calculating grid levels based on the current price and deviation threshold.")
                         await self.calculate_grid_levels(self.initial_price)
                         
-                        # Then calculate order sizes
+                        # Step 3: Then calculate order sizes
+                        await self.trades_logger.log(f"Calculating order sizes based on the current price and deviation threshold.")
                         await self.calculate_order_size()
                         
+                        # Step 4: Place initial orders
+                        await self.trades_logger.log(f"Placing initial orders based on the grid levels and order sizes.")
                         await self.place_batch_orders()
-                    # Calculate the deviation from the initial price
+                        
+                    # Periodically calculate the deviation from the initial price
                     deviation = (self.current_price - self.initial_price) / self.initial_price
-
                     self.deviation = deviation
-
-                    # Log the current price and deviation
-                    logging.info(f"Current price: ${self.current_price:.2f}. Deviation: {deviation:.2%}.")
+                    
+                    await self.trades_logger.log(f"Deviation from initial price: {deviation}")
 
                     # Define tasks for checking buy and sell orders
-                    async def check_buy_orders():
+                    async def check_initial_buy_orders():
                         for buy in list(self.buy_positions):
                             try:
-                                if self.current_price <= buy['price']:
-                                    await self.trades_logger.log(f"Buy order filled at price ${buy['price']:.2f}")
+                                # Проверяем статус ордера через Binance API
+                                order_status = await self.get_order_status(self.symbol, buy['order_id'])
+                                await self.trades_logger.log(f"Buy order {buy['order_id']} status: {order_status}")
+                                
+                                if order_status == 'FILLED':
+                                    await self.trades_logger.log(f"Buy order filled at price ${buy['price']}")
                                     
                                     # Удаление ордера с повторными попытками
                                     max_retries = 3
@@ -495,7 +522,7 @@ class GridStrategy:
                                             if retry_count == max_retries:
                                                 await self.trades_logger.log(f"Failed to remove active order after {max_retries} attempts: {e}")
                                                 continue
-                                            await asyncio.sleep(1 * retry_count)  # Увеличивающаяся задержка
+                                            await asyncio.sleep(1 * retry_count)
                                     
                                     # Размещение соответствующего ордера на продажу
                                     sell_price = buy['price'] + ((self.deviation_threshold / self.grids) * self.initial_price)
@@ -505,9 +532,9 @@ class GridStrategy:
                                     while retry_count < max_retries:
                                         try:
                                             sell_order = await self.place_limit_order(
-                                                price=sell_price, 
-                                                order_type='sell', 
-                                                isInitial=False, 
+                                                price=sell_price,
+                                                order_type='sell',
+                                                isInitial=False,
                                                 order_size=buy['quantity']
                                             )
                                             if sell_order and 'orderId' in sell_order:
@@ -524,11 +551,11 @@ class GridStrategy:
                                             self.buy_positions.remove(buy)
                                             quote_asset = self.symbol[-4:]
                                             
-                                            # Запись в историю торгов
+                                            # Запись в историю торгов используя данные из ответа Binance
                                             await self.add_trade_to_history(
                                                 buy_price=buy['price'],
-                                                sell_price=sell_price,
-                                                quantity=buy['quantity'],
+                                                sell_price=float(sell_order['price']),  # Используем цену из ответа
+                                                quantity=float(sell_order['origQty']),  # Используем количество из ответа
                                                 profit=0,
                                                 profit_asset=quote_asset,
                                                 status='OPEN',
@@ -537,12 +564,12 @@ class GridStrategy:
                                                 sell_order_id=sell_order['orderId']
                                             )
                                             
-                                            # Отслеживание открытой сделки
+                                            # Отслеживание открытой сделки с данными из ответа
                                             self.open_trades.append({
                                                 'buy_order': buy,
                                                 'sell_order': {
-                                                    'price': sell_price,
-                                                    'quantity': buy['quantity'],
+                                                    'price': float(sell_order['price']),
+                                                    'quantity': float(sell_order['origQty']),
                                                     'order_id': sell_order['orderId']
                                                 },
                                                 'trade_type': 'BUY_SELL'
@@ -557,11 +584,15 @@ class GridStrategy:
                                 await self.trades_logger.log(f"Error in check_buy_orders: {e}")
                                 continue
 
-                    async def check_sell_orders():
+                    async def check_initial_sell_orders():
                         for sell in list(self.sell_positions):
                             try:
-                                if self.current_price >= sell['price']:
-                                    await self.trades_logger.log(f"Sell order filled at price ${sell['price']:.2f}")
+                                # Проверяем статус ордера через Binance API
+                                order_status = await self.get_order_status(self.symbol, sell['order_id'])
+                                await self.trades_logger.log(f"Sell order {sell['order_id']} status: {order_status}")
+                                
+                                if order_status == 'FILLED':
+                                    await self.trades_logger.log(f"Sell order filled at price ${sell['price']}")
                                     
                                     # Удаление ордера с повторными попытками
                                     max_retries = 3
@@ -585,9 +616,9 @@ class GridStrategy:
                                     while retry_count < max_retries:
                                         try:
                                             buy_order = await self.place_limit_order(
-                                                price=buy_price, 
-                                                order_type='buy', 
-                                                isInitial=False, 
+                                                price=buy_price,
+                                                order_type='buy',
+                                                isInitial=False,
                                                 order_size=sell['quantity']
                                             )
                                             if buy_order and 'orderId' in buy_order:
@@ -604,11 +635,11 @@ class GridStrategy:
                                             self.sell_positions.remove(sell)
                                             base_asset = self.symbol[:-4]
                                             
-                                            # Запись в историю торгов
+                                            # Запись в историю торгов используя данные из ответа Binance
                                             await self.add_trade_to_history(
-                                                buy_price=buy_price,
+                                                buy_price=float(buy_order['price']),
                                                 sell_price=sell['price'],
-                                                quantity=sell['quantity'],
+                                                quantity=float(buy_order['origQty']),
                                                 profit=0,
                                                 profit_asset=base_asset,
                                                 status='OPEN',
@@ -621,8 +652,8 @@ class GridStrategy:
                                             self.open_trades.append({
                                                 'sell_order': sell,
                                                 'buy_order': {
-                                                    'price': buy_price,
-                                                    'quantity': sell['quantity'],
+                                                    'price': float(buy_order['price']),
+                                                    'quantity': float(buy_order['origQty']),
                                                     'order_id': buy_order['orderId']
                                                 },
                                                 'trade_type': 'SELL_BUY'
@@ -637,7 +668,7 @@ class GridStrategy:
                                 await self.trades_logger.log(f"Error in check_sell_orders: {e}")
                                 continue
 
-                    await asyncio.gather(check_buy_orders(), check_sell_orders())
+                    await asyncio.gather(check_initial_buy_orders(), check_initial_sell_orders())
                                         
                     # Check open trades
                     await self.check_open_trades()
@@ -664,37 +695,59 @@ class GridStrategy:
     async def reset_grid(self, new_initial_price):
         """Reset the grid when the deviation threshold is reached."""
         logging.info(
-            f"Resetting grid with new initial price at ${new_initial_price:.2f}."
+            f"Resetting grid with new initial price at ${new_initial_price}."
         )
         self.initial_price = new_initial_price  # Update the initial price
         await self.calculate_grid_levels(self.initial_price)  # Recalculate grid levels based on the new price
         await self.place_batch_orders()  # Place new orders after resetting the grid
 
     async def cancel_all_orders(self):
-        """Cancel all open orders."""
+        """Cancel all initial orders."""
         async with self.throttler:
             try:
-                logging.info("Attempting to cancel all open orders.")
-                # Отменяем ордера на бирже
-                cancelled_orders = await self.binance_client.cancel_all_orders_async(self.symbol)
+                logging.info("Attempting to cancel all initial orders.")
                 
-                if cancelled_orders:
-                    logging.info(f"All open orders for {self.symbol} have been cancelled.")
-                else:
-                    logging.warning(f"No open orders to cancel for {self.symbol}.")
-                
-                # Удаляем из базы данных
+                # Получаем список initial ордеров из базы данных
                 async with async_session() as session:
-                    await session.execute(delete(ActiveOrder))
-                    await session.commit()
-                
-                # Очищаем список в памяти
-                self.active_orders.clear()
-                self.trade_history.clear()
-                
-                logging.info(f"All open orders for {self.symbol} have been cancelled.")
+                    result = await session.execute(
+                        select(ActiveOrder).where(ActiveOrder.isInitial == True)
+                    )
+                    initial_orders = result.scalars().all()
+                    
+                    if not initial_orders:
+                        logging.warning(f"No initial orders found to cancel for {self.symbol}.")
+                        return
+                    
+                    # Собираем ID всех initial ордеров
+                    initial_order_ids = [order.order_id for order in initial_orders]
+                    
+                    # Отменяем все initial ордера одним запросом
+                    cancelled_orders = await self.binance_client.cancel_orders_by_ids_async(
+                        symbol=self.symbol,
+                        order_ids=initial_order_ids
+                    )
+                    
+                    if cancelled_orders:
+                        # Удаляем отмененные ордера из базы данных
+                        await session.execute(
+                            delete(ActiveOrder).where(
+                                ActiveOrder.order_id.in_(initial_order_ids)
+                            )
+                        )
+                        await session.commit()
+                        
+                        # Удаляем из списка в памяти
+                        self.active_orders = [
+                            order for order in self.active_orders 
+                            if order['order_id'] not in initial_order_ids
+                        ]
+                        
+                        logging.info(f"Successfully cancelled {len(cancelled_orders)} initial orders")
+                    else:
+                        logging.warning("Failed to cancel orders or no orders were cancelled")
+                    
             except Exception as e:
-                logging.error(f"Error cancelling orders: {str(e)}")
+                logging.error(f"Error in cancel_all_orders: {str(e)}")
 
     def extract_filters(self, exchange_info):
         """Extract necessary filters from exchange_info."""
@@ -805,7 +858,7 @@ class GridStrategy:
                         quote_asset = self.symbol[-4:]
                     
                         await self.trades_logger.log(f"Trade completed - Buy price: {buy_price}, Sell price: {sell_price}")
-                        await self.trades_logger.log(f"Realized profit from buy-sell pair: ${profit_usdt:.2f} {quote_asset}")
+                        await self.trades_logger.log(f"Realized profit from buy-sell pair: ${profit_usdt} {quote_asset}")
                         
                         # Update trade history with completed trade
                         await self.update_trade_in_history(
@@ -1170,7 +1223,7 @@ class GridStrategy:
         }
 
     async def stop_strategy(self):
-        """Останавливает стратегию и очищает все ресурсы."""
+        """Останалвает стратегию и очищает все ресурсы."""
         try:
             # Устанаввием флаг остановки
             self.stop_flag = True
@@ -1211,8 +1264,6 @@ class GridStrategy:
             self.realized_profit_a = 0
             self.realized_profit_b = 0
             
-            # Создание сессий и подключений
-            self.session = aiohttp.ClientSession()
             
             # Запуск основного цикла стратегии
             logging.info(f"Запуск стратегии для пары {self.symbol}")

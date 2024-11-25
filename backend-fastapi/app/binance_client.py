@@ -78,8 +78,14 @@ class BinanceClient:
         except (BinanceAPIException, BinanceRequestException) as e:
             print(f"An error occurred while placing an order: {str(e)}")
             return None
-    async def cancel_all_orders_async(self, symbol):
-        """Cancel all open orders for a symbol asynchronously."""
+    async def cancel_all_orders_async(self, symbol, initial_only=False):
+        """
+        Cancel orders for a symbol asynchronously.
+        
+        Args:
+            symbol (str): Trading pair symbol
+            initial_only (bool): If True, cancel only initial orders. If False, cancel all orders.
+        """
         endpoint = '/api/v3/openOrders'
         timestamp = int(time.time() * 1000)
         params = {
@@ -89,23 +95,65 @@ class BinanceClient:
 
         # Create signature
         query_string = '&'.join([f"{key}={value}" for key, value in params.items()])
-        signature = hmac.new(self.api_secret.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
+        signature = hmac.new(self.api_secret.encode('utf-8'), 
+                           query_string.encode('utf-8'), 
+                           hashlib.sha256).hexdigest()
         params['signature'] = signature
 
         headers = {
             'X-MBX-APIKEY': self.api_key
         }
 
-        # Make DELETE request to cancel all orders
         try:
-            async with self.session.delete(f"{self.BASE_URL}{endpoint}", params=params, headers=headers) as resp:
-                response = await resp.json()
-                if resp.status == 200:
-                    logging.info(f"Successfully cancelled all orders for {symbol}")
-                    return response
-                else:
-                    logging.error(f"Failed to cancel orders: {response}")
+            # Сначала получаем список всех открытых ордеров
+            async with self.session.get(f"{self.BASE_URL}/api/v3/openOrders", 
+                                      params=params, 
+                                      headers=headers) as resp:
+                open_orders = await resp.json()
+                
+                if resp.status != 200:
+                    logging.error(f"Failed to get open orders: {open_orders}")
                     return None
+
+                cancelled_orders = []
+                
+                # Если initial_only=True, отменяем только initial ордера
+                # В противном случае отменяем все ордера
+                for order in open_orders:
+                    if not initial_only or order.get('isInitial', False):
+                        cancel_params = {
+                            'symbol': symbol,
+                            'orderId': order['orderId'],
+                            'timestamp': str(int(time.time() * 1000))
+                        }
+                        
+                        # Создаем подпись для каждого запроса отмены
+                        cancel_query = '&'.join([f"{key}={value}" 
+                                               for key, value in cancel_params.items()])
+                        cancel_params['signature'] = hmac.new(
+                            self.api_secret.encode('utf-8'),
+                            cancel_query.encode('utf-8'),
+                            hashlib.sha256
+                        ).hexdigest()
+
+                        async with self.session.delete(
+                            f"{self.BASE_URL}/api/v3/order",
+                            params=cancel_params,
+                            headers=headers
+                        ) as cancel_resp:
+                            result = await cancel_resp.json()
+                            if cancel_resp.status == 200:
+                                cancelled_orders.append(result)
+                            else:
+                                logging.error(f"Failed to cancel order {order['orderId']}: {result}")
+
+                if cancelled_orders:
+                    logging.info(f"Successfully cancelled {len(cancelled_orders)} orders for {symbol}")
+                    return cancelled_orders
+                else:
+                    logging.info(f"No {'initial ' if initial_only else ''}orders to cancel for {symbol}")
+                    return []
+
         except Exception as e:
             logging.error(f"Error cancelling orders: {str(e)}")
             return None
@@ -194,5 +242,50 @@ class BinanceClient:
         """Ensure session is closed on deletion."""
         if hasattr(self, 'session') and not self.session.closed:
             asyncio.create_task(self.session.close())
+
+    async def cancel_orders_by_ids_async(self, symbol: str, order_ids: list):
+        """
+        Cancel specific orders by their IDs asynchronously.
+        
+        Args:
+            symbol (str): Trading pair symbol
+            order_ids (list): List of order IDs to cancel
+        """
+        cancelled_orders = []
+        
+        for order_id in order_ids:
+            try:
+                timestamp = int(time.time() * 1000)
+                params = {
+                    'symbol': symbol,
+                    'orderId': order_id,
+                    'timestamp': str(timestamp)
+                }
+                
+                # Создаем подпись
+                query_string = '&'.join([f"{key}={value}" for key, value in params.items()])
+                signature = hmac.new(
+                    self.api_secret.encode('utf-8'),
+                    query_string.encode('utf-8'),
+                    hashlib.sha256
+                ).hexdigest()
+                params['signature'] = signature
+
+                async with self.session.delete(
+                    f"{self.BASE_URL}/api/v3/order",
+                    params=params,
+                    headers={'X-MBX-APIKEY': self.api_key}
+                ) as resp:
+                    result = await resp.json()
+                    if resp.status == 200:
+                        cancelled_orders.append(result)
+                        logging.info(f"Successfully cancelled order {order_id}")
+                    else:
+                        logging.error(f"Failed to cancel order {order_id}: {result}")
+
+            except Exception as e:
+                logging.error(f"Error cancelling order {order_id}: {str(e)}")
+                
+        return cancelled_orders if cancelled_orders else None
 
  
