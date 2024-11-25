@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from gridstrat import start_grid_strategy, stop_grid_strategy, GridStrategy
-from models.models import TradingParameters, ActiveOrder, TradeHistory
+from models.models import TradingParameters, ActiveOrder, TradeHistory, OrderHistory
 from sqlalchemy import delete
 from sqlalchemy.future import select
 from database import async_session
@@ -100,3 +100,10 @@ class TradingBotManager:
             result_trades = await session.execute(select(TradeHistory))
             trade_history = result_trades.scalars().all()
             return list(trade_history)
+
+    @classmethod
+    async def get_order_history_list(cls) -> List[OrderHistory]:
+        async with async_session() as session:
+            result = await session.execute(select(OrderHistory))
+            order_history = result.scalars().all()
+            return list(order_history)

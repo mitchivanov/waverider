@@ -4,6 +4,7 @@ import { BotStatus } from './components/BotStatus';
 import { TradeHistory } from './components/TradeHistory';
 import { ActiveOrders } from './components/ActiveOrders';
 import { PriceChart } from './components/PriceChart';
+import { OrderHistory } from './components/OrderHistory';
 import './App.css';
 
 function App() {
@@ -14,6 +15,7 @@ function App() {
         <BotControl />
         <BotStatus />
         <ActiveOrders />
+        <OrderHistory />
         <TradeHistory />
         <PriceChart />
       </div>

@@ -320,9 +320,24 @@ async def websocket_endpoint(websocket: WebSocket):
                     for trade in await TradingBotManager.get_all_trades_list()
                 ]
 
+                order_history_data = [
+                    {
+                        "order_id": order.order_id,
+                        "order_type": order.order_type,
+                        "price": order.price,
+                        "quantity": order.quantity,
+                        "status": order.status,
+                        "created_at": order.created_at.isoformat(),
+                        "updated_at": order.updated_at.isoformat()
+                    }
+                    for order in await TradingBotManager.get_order_history_list()
+                ]
+
                 await manager.broadcast({"type": "active_orders_data", "payload": active_orders_data})
                 
                 await manager.broadcast({"type": "all_trades_data", "payload": all_trades_data})
+                
+                await manager.broadcast({"type": "order_history_data", "payload": order_history_data})
 
                 await asyncio.sleep(1)
             except Exception as e:

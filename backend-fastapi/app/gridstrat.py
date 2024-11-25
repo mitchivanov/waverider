@@ -14,7 +14,7 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import async_session
-from models.models import TradeHistory, ActiveOrder
+from models.models import TradeHistory, ActiveOrder, OrderHistory
 from sqlalchemy import update
 import aiofiles
 
@@ -326,11 +326,21 @@ class GridStrategy:
                 )
 
                 if order and 'orderId' in order:
-
-                    # Update positions and active orders
-
                     order_id = order['orderId']
                     
+                    # Add to OrderHistory
+                    async with async_session() as session:
+                        order_history = OrderHistory(
+                            order_id=str(order_id),
+                            order_type=order_type.lower(),
+                            price=price,
+                            quantity=order_size,
+                            status='OPEN'
+                        )
+                        session.add(order_history)
+                        await session.commit()
+
+                    # Update positions and active orders
                     if order_type.lower() == 'buy' and isInitial:
                         self.buy_positions.append({'price': price, 'quantity': order_size, 'order_id': order_id})
                     elif order_type.lower() == 'sell' and isInitial:

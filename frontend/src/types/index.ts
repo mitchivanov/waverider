@@ -40,6 +40,16 @@ export interface TradeHistory {
     executed_at?: string;
 }
 
+export interface OrderHistory {
+    order_id: string;
+    order_type: string;
+    price: number;
+    quantity: number;
+    status: string;
+    created_at: string;
+    updated_at: string;
+  }
+
 export interface BotStatus {
     status: 'active' | 'stopped';
     current_price: number | null;
