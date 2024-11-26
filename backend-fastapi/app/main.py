@@ -9,7 +9,7 @@ import datetime
 from manager import TradingBotManager
 from database import async_session
 from sqlalchemy.future import select
-from models.models import ActiveOrder, TradeHistory
+from models.models import ActiveOrder, TradeHistory, OrderHistory
 import asyncio
 from sqlalchemy import delete
 from models.models import TradingParameters
@@ -385,6 +385,8 @@ async def clear_database():
             await session.execute(delete(ActiveOrder))
             # Очищаем таблицу истории торгов
             await session.execute(delete(TradeHistory))
+            # Очищаем таблицу истории ордеров
+            await session.execute(delete(OrderHistory))
             await session.commit()
             logging.info("База данных успешно очищена")
         except Exception as e:
