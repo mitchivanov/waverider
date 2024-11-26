@@ -64,6 +64,7 @@ class AsyncLogger:
         """logging a message"""
         await self.queue.put(f"[{datetime.datetime.now().isoformat()}] [INFO] {message}\n")
         
+        
     async def _process_logs(self):
         """Processes the log queue and writes messages to the file"""
         while self.running:
@@ -261,24 +262,24 @@ class GridStrategy:
 
     async def place_limit_order(self, price, order_type, isInitial, order_size, recvWindow=2000):
         """Place a limit order with proper error handling and validation."""
-        logging.info(f"Placing {order_type.upper()} order at ${price} for {order_size} units.")
+        await self.trades_logger.log(f"Placing {order_type.upper()} order at ${price} for {order_size} units.")
         async with self.throttler:
             try:
                 # Perform a balance check before placing the order
                 if not self.is_balance_sufficient(order_type, price, order_size):
-                    logging.error(f"Insufficient balance to place {order_type.upper()} order at ${price} for {order_size} units.")
+                    await self.trades_logger.fatal(f"Insufficient balance to place {order_type.upper()} order at ${price} for {order_size} units.")
                     return
 
                 # Retrieve exchange info
                 exchange_info = self.binance_client.client.get_symbol_info(self.symbol)
                 if exchange_info is None:
-                    logging.error(f"Exchange information for symbol {self.symbol} not found.")
+                    await self.trades_logger.panic(f"Exchange information for symbol {self.symbol} not found.")
                     return
 
                 # Extract filters
                 filters = self.extract_filters(exchange_info)
                 if filters is None:
-                    logging.error(f"Could not extract filters for symbol {self.symbol}.")
+                    await self.trades_logger.panic(f"Could not extract filters for symbol {self.symbol}.")
                     return
 
                 # Unpack filter values
@@ -305,18 +306,18 @@ class GridStrategy:
 
                 # Ensure price is within min and max price
                 if price < min_price or price > max_price:
-                    logging.error(f"Price {price} is outside the allowed range ({min_price} - {max_price}).")
+                    await self.trades_logger.fatal(f"Price {price} is outside the allowed range ({min_price} - {max_price}).")
                     return
 
                 # Ensure quantity is within min and max quantity
                 if order_size < min_qty or order_size > max_qty:
-                    logging.error(f"Quantity {order_size} is outside the allowed range ({min_qty} - {max_qty}).")
+                    await self.trades_logger.fatal(f"Quantity {order_size} is outside the allowed range ({min_qty} - {max_qty}).")
                     return
 
                 # Ensure order notional is within min and max notional
                 notional = price * order_size
                 if notional < min_notional or notional > max_notional:
-                    logging.error(f"Order notional ({notional}) is outside the allowed range ({min_notional} - {max_notional}).")
+                    await self.trades_logger.fatal(f"Order notional ({notional}) is outside the allowed range ({min_notional} - {max_notional}).")
                     return
 
                 # Log and place the order
@@ -370,18 +371,17 @@ class GridStrategy:
                     return order
                 elif order and order.get('code') == -1021:  # Timestamp for this request is outside of the recvWindow
                     # Retry with increased recvWindow
-                    logging.warning(f"RecvWindow too small, retrying with increased window")
+                    await self.trades_logger.panic(f"RecvWindow too small, retrying with increased window")
                     return await self.place_limit_order(price, order_type, isInitial, order_size, recvWindow=5000)
                 else:
                     # Handle other API errors
                     error_code = order.get('code')
                     error_msg = order.get('msg')
-                    logging.error(f"Failed to place order: {error_code} - {error_msg}")
+                    await self.trades_logger.panic(f"Failed to place order: {error_code} - {error_msg}")
                     # Return None to indicate failure
                     return None
             except Exception as e:
-                logging.error(f"Error placing {order_type.upper()} order at ${price}: {str(e)}")
-                logging.exception("Full traceback for order placement error:")
+                await self.trades_logger.panic(f"Error placing {order_type.upper()} order at ${price}: {str(e)}")
                 # Return None to indicate exception occurred
                 return None
 
@@ -1291,7 +1291,7 @@ class GridStrategy:
 
 async def start_grid_strategy(parameters: dict) -> GridStrategy:
     """
-    Созда��т и запускает экземпляр торговой стратегии.
+    Создат и запускает экземпляр торговой стратегии.
     
     Args:
         parameters (dict): Параметры для инициализации стратегии
