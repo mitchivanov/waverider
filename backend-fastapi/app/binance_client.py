@@ -78,6 +78,7 @@ class BinanceClient:
         except (BinanceAPIException, BinanceRequestException) as e:
             print(f"An error occurred while placing an order: {str(e)}")
             return None
+        
     async def cancel_all_orders_async(self, symbol, initial_only=False):
         """
         Cancel orders for a symbol asynchronously.

@@ -25,7 +25,7 @@ def cancel_all_open_orders():
             client.cancel_order(symbol=symbol, orderId=order_id)
             print(f"Cancelled order {order_id} for symbol {symbol}")
 
-        print("All open orders have been cancelled.")
+        print("Number of open orders cancelled: ", len(open_orders))
 
     except Exception as e:
         print(f"An error occurred: {e}")

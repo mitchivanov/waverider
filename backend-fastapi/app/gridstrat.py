@@ -700,6 +700,7 @@ class GridStrategy:
                     # Reset grid if deviation threshold is reached
                     if abs(deviation) >= self.deviation_threshold:
                         logging.info("Deviation threshold reached. Resetting grid.")
+                        
                         await self.cancel_all_initial_orders()
                         await self.reset_grid(self.current_price)
 
@@ -745,6 +746,9 @@ class GridStrategy:
                     for order_id in initial_order_ids:
                         # Update order status in history
                         await self.update_order_history(order_id, 'CANCELED')
+                        
+                        
+                    
                     
                     # Cancel all initial orders in one request
                     cancelled_orders = await self.binance_client.cancel_orders_by_ids_async(
@@ -753,7 +757,21 @@ class GridStrategy:
                     )
                     
                     if cancelled_orders:
-                        # Удаляем отмененные ордера из базы данных
+                        
+                        # Clear buy_positions and sell_positions from initial orders
+                        self.buy_positions = [
+                            position for position in self.buy_positions 
+                            if position['order_id'] not in initial_order_ids
+                        ]
+                        
+                        
+                        self.sell_positions = [
+                            position for position in self.sell_positions 
+                            if position['order_id'] not in initial_order_ids
+                        ]
+                        
+                        
+                        # Delete cancelled orders from database
                         await session.execute(
                             delete(ActiveOrder).where(
                                 ActiveOrder.order_id.in_(initial_order_ids)
@@ -761,15 +779,17 @@ class GridStrategy:
                         )
                         await session.commit()
                         
-                        # Удаляем из списка в памяти
+                        # Delete cancelled orders from memory
                         self.active_orders = [
                             order for order in self.active_orders 
                             if order['order_id'] not in initial_order_ids
                         ]
                         
-                        logging.info(f"Successfully cancelled {len(cancelled_orders)} initial orders")
+
+                        
+                        await self.trades_logger.log(f"Successfully cancelled {len(cancelled_orders)} initial orders")
                     else:
-                        logging.warning("Failed to cancel orders or no orders were cancelled")
+                        await self.trades_logger.panic("Failed to cancel orders or no orders were cancelled")
                     
             except Exception as e:
                 logging.error(f"Error in cancel_all_orders: {str(e)}")
@@ -957,7 +977,6 @@ class GridStrategy:
                     order_id=order_id
                 )
                 if status:
-                    await self.trades_logger.log(f"BINANCE Order status: {status}")
                     return status
                 return None
             except Exception as e:
