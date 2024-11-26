@@ -518,7 +518,7 @@ class GridStrategy:
                                 await self.trades_logger.log(f"Buy order {buy['order_id']} status: {order_status}")
                                 
                                 if order_status == 'FILLED':
-                                    await self.trades_logger.log(f"Buy order filled at price ${buy['price']}")
+                                    await self.trades_logger.log(f"Buy order {buy['order_id']} filled at price ${buy['price']}")
                                     
                                     # Удаление ордера с повторными попытками
                                     max_retries = 3
@@ -526,6 +526,7 @@ class GridStrategy:
                                     while retry_count < max_retries:
                                         try:
                                             await self.remove_active_order(buy['order_id'])
+                                            await self.trades_logger.log(f"Buy order {buy['order_id']} removed")
                                             break
                                         except Exception as e:
                                             retry_count += 1
@@ -602,7 +603,7 @@ class GridStrategy:
                                 await self.trades_logger.log(f"Sell order {sell['order_id']} status: {order_status}")
                                 
                                 if order_status == 'FILLED':
-                                    await self.trades_logger.log(f"Sell order filled at price ${sell['price']}")
+                                    await self.trades_logger.log(f"Sell order {sell['order_id']} filled at price ${sell['price']}")
                                     
                                     # Удаление ордера с повторными попытками
                                     max_retries = 3
@@ -610,6 +611,7 @@ class GridStrategy:
                                     while retry_count < max_retries:
                                         try:
                                             await self.remove_active_order(sell['order_id'])
+                                            await self.trades_logger.log(f"Sell order {sell['order_id']} removed")
                                             break
                                         except Exception as e:
                                             retry_count += 1
@@ -684,12 +686,12 @@ class GridStrategy:
                     await self.check_open_trades()
 
                     # Log summary of the checks
-                    logging.info(f"Summary: {len(self.buy_positions)} buy orders and {len(self.sell_positions)} sell orders checked.")
+                    await self.trades_logger.log(f"Summary: {len(self.buy_positions)} buy orders and {len(self.sell_positions)} sell orders checked.")
 
                     # Reset grid if deviation threshold is reached
                     if abs(deviation) >= self.deviation_threshold:
                         logging.info("Deviation threshold reached. Resetting grid.")
-                        await self.cancel_all_orders()
+                        await self.cancel_all_initial_orders()
                         await self.reset_grid(self.current_price)
 
                 # Sleep asynchronously to wait before the next price check
@@ -711,7 +713,7 @@ class GridStrategy:
         await self.calculate_grid_levels(self.initial_price)  # Recalculate grid levels based on the new price
         await self.place_batch_orders()  # Place new orders after resetting the grid
 
-    async def cancel_all_orders(self):
+    async def cancel_all_initial_orders(self):
         """Cancel all initial orders."""
         async with self.throttler:
             try:
@@ -926,17 +928,19 @@ class GridStrategy:
                 await self.trades_logger.log(f"Error processing trade: {str(e)}")
 
     async def get_order_status(self, symbol, order_id):
-        """Checks the status of an order from the exchange."""
+        """Checks the status of an order from the exchange asynchronously."""
         async with self.throttler:
             try:
-                order = self.binance_client.client.get_order(
+                status = await self.binance_client.get_order_status_async(
                     symbol=symbol,
-                    orderId=order_id
+                    order_id=order_id
                 )
-                logging.info(f"BINANCE Order status: {order['status']}")
-                return order['status']
+                if status:
+                    await self.trades_logger.log(f"BINANCE Order status: {status}")
+                    return status
+                return None
             except Exception as e:
-                logging.error(f"Error fetching order status for order {order_id}: {e}")
+                await self.trades_logger.panic(f"Error fetching order status for order {order_id}: {e}")
                 return None
 
     async def close_all_sessions(self):
@@ -1123,21 +1127,25 @@ class GridStrategy:
                 raise
 
     async def remove_active_order(self, order_id):
-        """Удаляет ордер из списка активных ордеров."""
+        """Deletes an active order from the database and the local list."""
         try:
-            # Удаляем из базы данных
+            # Delete from database
             async with async_session() as session:
                 await session.execute(
                     delete(ActiveOrder).where(ActiveOrder.order_id == order_id)
                 )
                 await session.commit()
                 
-            # Удаляем из списка в памяти
+            # Delete from local list
             self.active_orders = [order for order in self.active_orders if order['order_id'] != order_id]
-            logging.info(f"Ордер {order_id} успешно удален из списка активных")
+            await self.trades_logger.log(f"Order {order_id} removed from active orders")
+            
+            # Delete from buy and sell positions
+            self.buy_positions = [position for position in self.buy_positions if position['order_id'] != order_id]
+            self.sell_positions = [position for position in self.sell_positions if position['order_id'] != order_id]
             
         except Exception as e:
-            logging.error(f"Ошибка при удалении активного ордера {order_id}: {e}")
+            await self.trades_logger.panic(f"Error removing active order {order_id}: {e}")
 
 
 # ENDPOINTS UTILITIES
@@ -1237,9 +1245,6 @@ class GridStrategy:
         try:
             # Устанаввием флаг остановки
             self.stop_flag = True
-            
-            # Отменяем все активные ордера
-            await self.cancel_all_orders() 
         
             # Очищаем локальные списки
             self.active_orders = []
@@ -1286,7 +1291,7 @@ class GridStrategy:
 
 async def start_grid_strategy(parameters: dict) -> GridStrategy:
     """
-    Создает и запускает экземпляр торговой стратегии.
+    Созда��т и запускает экземпляр торговой стратегии.
     
     Args:
         parameters (dict): Параметры для инициализации стратегии

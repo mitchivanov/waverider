@@ -288,4 +288,39 @@ class BinanceClient:
                 
         return cancelled_orders if cancelled_orders else None
 
+    async def get_order_status_async(self, symbol: str, order_id: int):
+        """Get order status asynchronously."""
+        endpoint = '/api/v3/order'
+        timestamp = int(time.time() * 1000)
+        
+        params = {
+            'symbol': symbol,
+            'orderId': order_id,
+            'timestamp': str(timestamp)
+        }
+        
+        # Create signature
+        query_string = '&'.join([f"{key}={value}" for key, value in params.items()])
+        signature = hmac.new(
+            self.api_secret.encode('utf-8'),
+            query_string.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        params['signature'] = signature
+
+        try:
+            async with self.session.get(
+                f"{self.BASE_URL}{endpoint}",
+                params=params,
+                headers={'X-MBX-APIKEY': self.api_key}
+            ) as resp:
+                if resp.status == 200:
+                    order = await resp.json()
+                    return order['status']
+                logging.error(f"Failed to get order status: {await resp.text()}")
+                return None
+        except Exception as e:
+            logging.error(f"Error getting order status: {str(e)}")
+            return None
+
  
