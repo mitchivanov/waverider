@@ -724,10 +724,10 @@ class GridStrategy:
         await self.place_batch_orders()  # Place new orders after resetting the grid
 
     async def cancel_all_initial_orders(self):
-        """Cancel all initial orders."""
+        """Cancel all initial orders and remove them from all tracking instances."""
         async with self.throttler:
             try:
-                logging.info("Attempting to cancel all initial orders.")
+                await self.trades_logger.log("Attempting to cancel all initial orders.")
                 
                 # Получаем список initial ордеров из базы данных
                 async with async_session() as session:
@@ -737,59 +737,52 @@ class GridStrategy:
                     initial_orders = result.scalars().all()
                     
                     if not initial_orders:
-                        logging.warning(f"No initial orders found to cancel for {self.symbol}.")
+                        await self.trades_logger.log(f"No initial orders found to cancel for {self.symbol}.")
                         return
                     
                     # Собираем ID всех initial ордеров
                     initial_order_ids = [order.order_id for order in initial_orders]
                     
-                    for order_id in initial_order_ids:
-                        # Update order status in history
-                        await self.update_order_history(order_id, 'CANCELED')
-                        
-                        
-                    
-                    
-                    # Cancel all initial orders in one request
-                    cancelled_orders = await self.binance_client.cancel_orders_by_ids_async(
-                        symbol=self.symbol,
-                        order_ids=initial_order_ids
-                    )
-                    
-                    if cancelled_orders:
-                        
-                        # Clear buy_positions and sell_positions from initial orders
-                        self.buy_positions = [
-                            position for position in self.buy_positions 
-                            if position['order_id'] not in initial_order_ids
-                        ]
-                        
-                        
-                        self.sell_positions = [
-                            position for position in self.sell_positions 
-                            if position['order_id'] not in initial_order_ids
-                        ]
-                        
-                        
-                        # Delete cancelled orders from database
-                        await session.execute(
-                            delete(ActiveOrder).where(
-                                ActiveOrder.order_id.in_(initial_order_ids)
-                            )
+                    try:
+                        # Cancel all initial orders in one request
+                        cancelled_orders = await self.binance_client.cancel_orders_by_ids_async(
+                            symbol=self.symbol,
+                            order_ids=initial_order_ids
                         )
-                        await session.commit()
                         
-                        # Delete cancelled orders from memory
-                        self.active_orders = [
-                            order for order in self.active_orders 
-                            if order['order_id'] not in initial_order_ids
-                        ]
+                        if cancelled_orders:
+                            # Обновляем статус в истории и удаляем из всех инстанций
+                            for order_id in initial_order_ids:
+                                try:
+                                    # 1. Update order status in history
+                                    await self.update_order_history(order_id, 'CANCELED')
+                                    
+                                    # 2. Remove from buy_positions
+                                    self.buy_positions = [
+                                        pos for pos in self.buy_positions 
+                                        if str(pos['order_id']) != str(order_id)
+                                    ]
+                                    
+                                    # 3. Remove from sell_positions
+                                    self.sell_positions = [
+                                        pos for pos in self.sell_positions 
+                                        if str(pos['order_id']) != str(order_id)
+                                    ]
+                                    
+                                    # 4. Remove from active_orders
+                                    self.active_orders = [
+                                        order for order in self.active_orders 
+                                        if str(order['order_id']) != str(order_id)
+                                    ]
+                                    
+                                    await self.trades_logger.log(f"Order {order_id} successfully cancelled and removed from all tracking instances")
+                                except Exception as e:
+                                    await self.trades_logger.log(f"Error cancelling order {order_id}: {e}")
+                        else:
+                            await self.trades_logger.panic("Failed to cancel orders or no orders were cancelled")
                         
-
-                        
-                        await self.trades_logger.log(f"Successfully cancelled {len(cancelled_orders)} initial orders")
-                    else:
-                        await self.trades_logger.panic("Failed to cancel orders or no orders were cancelled")
+                    except Exception as e:
+                        await self.trades_logger.log(f"Error cancelling orders: {e}")
                     
             except Exception as e:
                 logging.error(f"Error in cancel_all_orders: {str(e)}")
@@ -885,7 +878,7 @@ class GridStrategy:
                     buy_order = trade['buy_order']
                     sell_order = trade['sell_order']
                     order_status = await self.get_order_status(self.symbol, sell_order.get('order_id'))
-                    await self.trades_logger.log(f"Sell order status: {order_status}")
+                    await self.trades_logger.log(f"CHECKING TRADE: Sell order status: {order_status}")
                     
                     if order_status == 'FILLED':
                         await self.trades_logger.log("Sell order is filled, processing sell order")
@@ -928,7 +921,7 @@ class GridStrategy:
                     buy_order = trade['buy_order']
                     sell_order = trade['sell_order']
                     order_status = await self.get_order_status(self.symbol, buy_order.get('order_id'))
-                    await self.trades_logger.log(f"Buy order status: {order_status}")
+                    await self.trades_logger.log(f"CHECKING TRADE: Buy order status: {order_status}")
                     
                     if order_status == 'FILLED':
                         await self.trades_logger.log("Buy order is filled, processing buy order")
