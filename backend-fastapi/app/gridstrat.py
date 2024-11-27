@@ -775,6 +775,12 @@ class GridStrategy:
                                         if str(order['order_id']) != str(order_id)
                                     ]
                                     
+                                    # 5. Delete from database
+                                    await session.execute(
+                                        delete(ActiveOrder).where(ActiveOrder.order_id == order_id)
+                                    )
+                                    await session.commit()
+                                    
                                     await self.trades_logger.log(f"Order {order_id} successfully cancelled and removed from all tracking instances")
                                 except Exception as e:
                                     await self.trades_logger.log(f"Error cancelling order {order_id}: {e}")
