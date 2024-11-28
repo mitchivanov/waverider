@@ -17,7 +17,7 @@ class TradingParameters(SQLModel, table=True):
 
 class ActiveOrder(SQLModel, table=True):
     order_id: str = Field(primary_key=True)
-    order_type: str = Field(index=True)
+    order_type: str = Field(index=True) # 'buy' or 'sell'
     price: float
     quantity: float
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -60,3 +60,6 @@ class OrderHistory(SQLModel, table=True):
             datetime: lambda v: v.isoformat()
         }
         arbitrary_types_allowed = True
+
+
+
