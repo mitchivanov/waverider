@@ -3,11 +3,11 @@ from binance.client import Client
 from binance.enums import SIDE_BUY, SIDE_SELL
 
 # Set your API key and secret
-API_KEY = 'YlWpH6a39JrSXKihr51hXXybr9RZEsh7WMsKTxGsRIp1kaslF5Igv6hY6LrHjf9F'
-API_SECRET = '4k2hRVjNniNMs6KE9e6Zp8gcg7ds2hDnVh6HFa6lp7L4ir1eFaGEHKjrNZjIj9XY'
+api_key = '55euYhdLmx17qhTB1KhBSbrsS3A79bYU0C408VHMYsTTMcsyfSMboJ1d1uEWNLq3'
+api_secret = '2zlWvVVQIrj5ZryMNCkt9KIqowlQQMdG0bcV4g4LAinOnF8lc7O3Udumn6rIAyLb'
 
 # Initialize the Binance client for the testnet
-client = Client(API_KEY, API_SECRET, testnet=True)
+client = Client(api_key, api_secret, testnet=True)
 
 def cancel_all_open_orders():
     try:
@@ -25,7 +25,7 @@ def cancel_all_open_orders():
             client.cancel_order(symbol=symbol, orderId=order_id)
             print(f"Cancelled order {order_id} for symbol {symbol}")
 
-        print("All open orders have been cancelled.")
+        print("Number of open orders cancelled: ", len(open_orders))
 
     except Exception as e:
         print(f"An error occurred: {e}")

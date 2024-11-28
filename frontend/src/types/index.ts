@@ -21,6 +21,7 @@ export interface PriceData {
 export interface ActiveOrder {
     order_id: string;
     order_type: 'buy' | 'sell';
+    isInitial: boolean;
     price: number;
     quantity: number;
     created_at?: string;
@@ -34,8 +35,20 @@ export interface TradeHistory {
     profit_asset: string;
     status: string;
     trade_type: string;
+    buy_order_id: string;
+    sell_order_id: string;
     executed_at?: string;
 }
+
+export interface OrderHistory {
+    order_id: string;
+    order_type: string;
+    price: number;
+    quantity: number;
+    status: string;
+    created_at: string;
+    updated_at: string;
+  }
 
 export interface BotStatus {
     status: 'active' | 'stopped';

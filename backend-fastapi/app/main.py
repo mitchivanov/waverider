@@ -9,14 +9,14 @@ import datetime
 from manager import TradingBotManager
 from database import async_session
 from sqlalchemy.future import select
-from models.models import ActiveOrder, TradeHistory
+from models.models import ActiveOrder, TradeHistory, OrderHistory
 import asyncio
 from sqlalchemy import delete
 from models.models import TradingParameters
 import json
 from starlette.websockets import WebSocketState
 
-from strategies.components.kline_manager import KlineManager
+from kline_manager import KlineManager
 
 # Отключаем ненужные логи
 logging.getLogger('websockets').setLevel(logging.ERROR)
@@ -174,7 +174,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if websocket.client_state == WebSocketState.DISCONNECTED:
                     break
 
-                if websocket.client_state == WebSocketState.OPEN:
+                if websocket.client_state == WebSocketState.CONNECTED:
                     try:
                         message = await asyncio.wait_for(websocket.receive_json(), timeout=0.1)
                         msg_type = message.get("type")
@@ -290,13 +290,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     }
                 }
                 await manager.broadcast(status_update)
-                ws_logger.debug(f"Отправлено status_update: {json.dumps(status_update)}")
 
                 # Отправляем данные об ордерах и сделках
                 active_orders_data = [
                     {
                         "order_id": order.order_id,
                         "order_type": order.order_type,
+                        "isInitial": order.isInitial,
                         "price": order.price,
                         "quantity": order.quantity,
                         "created_at": order.created_at.isoformat()
@@ -313,16 +313,31 @@ async def websocket_endpoint(websocket: WebSocket):
                         "profit_asset": trade.profit_asset,
                         "status": trade.status,
                         "trade_type": trade.trade_type,
+                        "buy_order_id": trade.buy_order_id,
+                        "sell_order_id": trade.sell_order_id,
                         "executed_at": trade.executed_at.isoformat()
                     }
                     for trade in await TradingBotManager.get_all_trades_list()
                 ]
 
+                order_history_data = [
+                    {
+                        "order_id": order.order_id,
+                        "order_type": order.order_type,
+                        "price": order.price,
+                        "quantity": order.quantity,
+                        "status": order.status,
+                        "created_at": order.created_at.isoformat(),
+                        "updated_at": order.updated_at.isoformat()
+                    }
+                    for order in await TradingBotManager.get_order_history_list()
+                ]
+
                 await manager.broadcast({"type": "active_orders_data", "payload": active_orders_data})
-                ws_logger.debug(f"Отправлено active_orders_data: {json.dumps(active_orders_data)}")
                 
                 await manager.broadcast({"type": "all_trades_data", "payload": all_trades_data})
-                ws_logger.debug(f"Отправлено all_trades_data: {json.dumps(all_trades_data)}")
+                
+                await manager.broadcast({"type": "order_history_data", "payload": order_history_data})
 
                 await asyncio.sleep(1)
             except Exception as e:
@@ -370,6 +385,8 @@ async def clear_database():
             await session.execute(delete(ActiveOrder))
             # Очищаем таблицу истории торгов
             await session.execute(delete(TradeHistory))
+            # Очищаем таблицу истории ордеров
+            await session.execute(delete(OrderHistory))
             await session.commit()
             logging.info("База данных успешно очищена")
         except Exception as e:

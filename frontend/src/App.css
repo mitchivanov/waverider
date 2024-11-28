@@ -31,9 +31,10 @@
 .dashboard-grid > *:last-child {
   grid-column: 1 / -1;
   min-height: 0;
+  height: 500px;
 }
 
-.bot-control, .bot-status, .trade-history, .active-orders {
+.bot-control, .bot-status, .trade-history, .active-orders, .order-history {
   background-color: var(--bg-secondary);
   padding: 25px;
   border: 1px solid var(--border-color);
@@ -42,7 +43,7 @@
   transition: transform 0.2s, box-shadow 0.2s;
 }
 
-.bot-control:hover, .bot-status:hover, .trade-history:hover, .active-orders:hover {
+.bot-control:hover, .bot-status:hover, .trade-history:hover, .active-orders:hover, .order-history:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 8px rgba(0, 0, 0, 0.2);
 }
@@ -191,4 +192,64 @@ button:disabled {
   position: absolute;
   top: 0;
   left: 0;
+}
+
+.trade-history, .active-orders, .order-history {
+  height: 800px;
+  display: flex;
+  flex-direction: column;
+}
+
+.trade-history > table,
+.active-orders > table,
+.order-history > table {
+  flex: 1;
+  overflow-y: auto;
+  display: block;
+  margin-top: 15px;
+}
+
+.trade-history thead,
+.active-orders thead,
+.order-history thead {
+  position: sticky;
+  top: 0;
+  background-color: var(--bg-tertiary);
+  z-index: 1;
+}
+
+.trade-history tbody,
+.active-orders tbody,
+.order-history tbody {
+  display: block;
+  overflow-y: auto;
+  max-height: calc(100% - 60px);
+}
+
+.trade-history tr,
+.active-orders tr,
+.order-history tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+/* Для корректного отображения скроллбара */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
 }

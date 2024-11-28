@@ -4,8 +4,8 @@ import { TradingParameters } from '../types';
 
 const defaultParams: TradingParameters = {
   symbol: "BTCUSDT",
-  asset_a_funds: 700,
-  asset_b_funds: 0.01,
+  asset_a_funds: 5000,
+  asset_b_funds: 0.05,
   grids: 10,
   deviation_threshold: 0.004,
   growth_factor: 0.5,

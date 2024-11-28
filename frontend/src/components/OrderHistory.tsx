@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
 import useWebSocket from 'react-use-websocket';
-import { ActiveOrder } from '../types';
+import { OrderHistory as OrderHistoryType } from '../types';
 import { botService } from '../services/api';
 
-export const ActiveOrders: React.FC = () => {
-  const [orders, setOrders] = useState<ActiveOrder[]>([]);
+export const OrderHistory: React.FC = () => {
+  const [orders, setOrders] = useState<OrderHistoryType[]>([]);
 
   useWebSocket(botService.getWebSocketUrl(), {
     onMessage: (event) => {
       const data = JSON.parse(event.data);
-      if (data.type === 'active_orders_data') {
+      if (data.type === 'order_history_data') {
         setOrders(data.payload || []);
       }
     },
@@ -18,17 +18,18 @@ export const ActiveOrders: React.FC = () => {
   });
 
   return (
-    <div className="active-orders">
-      <h2>Active Orders</h2>
+    <div className="order-history">
+      <h2>Order History</h2>
       <table>
         <thead>
           <tr>
-            <th>ID</th>
+            <th>Order ID</th>
             <th>Type</th>
-            <th>Initial</th>
             <th>Price</th>
             <th>Quantity</th>
+            <th>Status</th>
             <th>Created</th>
+            <th>Updated</th>
           </tr>
         </thead>
         <tbody>
@@ -37,15 +38,16 @@ export const ActiveOrders: React.FC = () => {
               <tr key={order.order_id}>
                 <td>{order.order_id}</td>
                 <td>{order.order_type}</td>
-                <td>{order.isInitial ? 'Yes' : 'No'}</td>
                 <td>${order.price.toFixed(2)}</td>
                 <td>{order.quantity}</td>
-                <td>{order.created_at}</td>
+                <td>{order.status}</td>
+                <td>{new Date(order.created_at).toLocaleString()}</td>
+                <td>{new Date(order.updated_at).toLocaleString()}</td>
               </tr>
             ))
           ) : (
             <tr>
-              <td colSpan={5}>No active orders</td>
+              <td colSpan={7}>No order history</td>
             </tr>
           )}
         </tbody>
