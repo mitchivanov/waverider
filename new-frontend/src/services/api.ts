@@ -10,5 +10,5 @@ const WS_URL = `ws://localhost:8000/ws`;
 export const botService = {
   start: (params: TradingParameters) => api.post('/bot/start', params),
   stop: () => api.post('/bot/stop'),
-  getWebSocketUrl: () => WS_URL
+  getWebSocketUrl: () => WS_URL,
 }; 

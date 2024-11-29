@@ -97,6 +97,7 @@ class AsyncLogger:
 class GridStrategy:
     def __init__(
         self,
+        bot_id,
         symbol,
         asset_a_funds,
         asset_b_funds,
@@ -105,8 +106,9 @@ class GridStrategy:
         growth_factor,  # User-defined growth factor
         use_granular_distribution,  # User-defined flag for granular distribution
         trail_price=True,
-        only_profitable_trades=False,
+        only_profitable_trades=False
     ):
+        self.bot_id = bot_id
         # Securely retrieve API credentials from environment variables
         
         api_key = '55euYhdLmx17qhTB1KhBSbrsS3A79bYU0C408VHMYsTTMcsyfSMboJ1d1uEWNLq3'
@@ -157,6 +159,18 @@ class GridStrategy:
         
         self.trades_logger = AsyncLogger('logs/trades.log')
         
+        # Инициализируем текущую цену
+        asyncio.create_task(self.update_current_price())
+
+    async def update_current_price(self):
+        while True:
+            try:
+                self.current_price = await self.binance_client.get_current_price_async(self.symbol)
+                await asyncio.sleep(1)  # Update every second
+            except Exception as e:
+                await self.trades_logger.panic(f"Error updating current price: {e}")
+                await asyncio.sleep(5)  # Retry every 5 seconds in case of error
+
     def check_account_balance(self):
         """Check if the account balance is sufficient for the assigned funds."""
         account_info = self.binance_client.client.get_account()
@@ -332,6 +346,7 @@ class GridStrategy:
                     await self.add_order_to_history(
                         order_id=str(order_id),
                         order_type=order_type.lower(),
+                        isInitial=isInitial,
                         price=price,
                         quantity=order_size,
                         status='OPEN'
@@ -543,13 +558,15 @@ class GridStrategy:
                                     
                                     retry_count = 0
                                     sell_order = None
+                                    recvWindow = 5000
                                     while retry_count < max_retries:
                                         try:
                                             sell_order = await self.place_limit_order(
                                                 price=sell_price,
                                                 order_type='sell',
                                                 isInitial=False,
-                                                order_size=buy['quantity']
+                                                order_size=buy['quantity'],
+                                                recvWindow=recvWindow
                                             )
                                             if sell_order and 'orderId' in sell_order:
                                                 break
@@ -557,6 +574,7 @@ class GridStrategy:
                                             retry_count += 1
                                             if retry_count == max_retries:
                                                 await self.trades_logger.log(f"Failed to place sell order after {max_retries} attempts: {e}")
+                                                recvWindow += 5000
                                                 continue
                                             await asyncio.sleep(1 * retry_count)
                                     
@@ -1019,7 +1037,7 @@ class GridStrategy:
             
 # DATABASE OPERATIONS
 
-    async def add_trade_to_history(self, buy_price, sell_price, quantity, profit, profit_asset, status, trade_type, buy_order_id=None, sell_order_id=None):
+    async def add_trade_to_history(self, bot_id, buy_price, sell_price, quantity, profit, profit_asset, status, trade_type, buy_order_id=None, sell_order_id=None):
         try:
             logging.info(f"Попытка добавить сделку в историю: buy_price={buy_price}, sell_price={sell_price}, quantity={quantity}")
             
@@ -1039,15 +1057,16 @@ class GridStrategy:
             # Add to local history
             try:
                 self.trade_history.append(trade_data)
-                logging.debug("Сделка успешно добавлена в локальную историю")
+                await self.trades_logger.log("Сделка успешно добавлена в локальную историю")
             except Exception as e:
-                logging.error(f"Ошибка при добавлении в локальную историю: {e}")
+                await self.trades_logger.panic(f"Ошибка при добавлении в локальную историю: {e}")
                 raise
             
             # Add to the database
             try:
                 async with async_session() as session:
                     trade = TradeHistory(
+                        bot_id=bot_id,
                         buy_price=buy_price,
                         sell_price=sell_price,
                         quantity=quantity,
@@ -1061,20 +1080,21 @@ class GridStrategy:
                     )
                     session.add(trade)
                     await session.commit()
-                    logging.info(f"Сделка успешно добавлена в базу данных: {trade}")
+                    await self.trades_logger.log(f"Сделка успешно добавлена в базу данных: {trade}")
             except Exception as e:
-                logging.error(f"Ошибка при добавлении сделки в базу данных: {e}")
+                await self.trades_logger.panic(f"Ошибка при добавлении сделки в базу данных: {e}")
                 raise
                 
         except Exception as e:
-            logging.error(f"Критическая ошибка в add_trade_to_history: {e}")
+            await self.trades_logger.panic(f"Критическая ошибка в add_trade_to_history: {e}")
             raise
 
-    async def add_active_order(self, order_data):
+    async def add_active_order(self, bot_id, order_data):
         """Добавляет активный орде в базу данных и локальный список."""
         try:
             # Создаем объект ActiveOrder
             active_order = ActiveOrder(
+                bot_id=bot_id,
                 order_id=order_data["order_id"],  # Изменено с orderId
                 order_type=order_data["order_type"],  # Изменено с side
                 isInitial=order_data["isInitial"],
@@ -1087,13 +1107,15 @@ class GridStrategy:
             async with async_session() as session:
                 # Проверяем существование ордера
                 existing_order = await session.execute(
-                    select(ActiveOrder).where(ActiveOrder.order_id == active_order.order_id)
+                    select(ActiveOrder).where(ActiveOrder.order_id == active_order.order_id, 
+                                              ActiveOrder.bot_id == bot_id)
                 )
                 if existing_order.scalar_one_or_none():
                     # Если ордер существует, обновляем его
                     await session.execute(
                         update(ActiveOrder)
-                        .where(ActiveOrder.order_id == active_order.order_id)
+                        .where(ActiveOrder.order_id == active_order.order_id, 
+                               ActiveOrder.bot_id == bot_id)
                         .values(
                             order_type=active_order.order_type,
                             price=active_order.price,
@@ -1121,7 +1143,7 @@ class GridStrategy:
         except Exception as e:
             logging.error(f"Ошибка при сохранении активного ордера: {e}")
 
-    async def update_trade_in_history(self, buy_price, sell_price, quantity, profit, profit_asset, status, trade_type):
+    async def update_trade_in_history(self, bot_id, buy_price, sell_price, quantity, profit, profit_asset, status, trade_type):
         """Updates an existing trade in the history when it is closed."""
         async with async_session() as session:
             try:
@@ -1130,7 +1152,8 @@ class GridStrategy:
                     select(TradeHistory).where(
                         TradeHistory.buy_price == buy_price,
                         TradeHistory.quantity == quantity,
-                        TradeHistory.status == 'OPEN'
+                        TradeHistory.status == 'OPEN',
+                        TradeHistory.bot_id == bot_id
                     ).order_by(TradeHistory.executed_at.desc()).limit(1)
                 )
                 trade = result.scalar_one_or_none()
@@ -1147,7 +1170,8 @@ class GridStrategy:
                     for t in self.trade_history:
                         if (t['buy_price'] == buy_price and 
                             t['quantity'] == quantity and 
-                            t['status'] == 'OPEN'):
+                            t['status'] == 'OPEN' and
+                            t['bot_id'] == bot_id):
                             t.update({
                                 'sell_price': sell_price,
                                 'profit': profit,
@@ -1158,20 +1182,20 @@ class GridStrategy:
                             })
                             break
                 else:
-                    logging.warning(f"No open trade found with buy_price={buy_price}, quantity={quantity}")
+                    await self.trades_logger.panic(f"No open trade found with buy_price={buy_price}, quantity={quantity}, bot_id={bot_id}")
                     
             except Exception as e:
-                logging.error(f"Error updating trade history: {e}")
+                await self.trades_logger.panic(f"Error updating trade history: {e}")
                 await session.rollback()
                 raise
 
-    async def remove_active_order(self, order_id):
+    async def remove_active_order(self, bot_id, order_id):
         """Deletes an active order from the database and the local list."""
         try:
             # Delete from database
             async with async_session() as session:
                 await session.execute(
-                    delete(ActiveOrder).where(ActiveOrder.order_id == order_id)
+                    delete(ActiveOrder).where(ActiveOrder.order_id == order_id, ActiveOrder.bot_id == bot_id)
                 )
                 await session.commit()
                 
@@ -1186,13 +1210,15 @@ class GridStrategy:
         except Exception as e:
             await self.trades_logger.panic(f"Error removing active order {order_id}: {e}")
 
-    async def add_order_to_history(self, order_id: str, order_type: str, price: float, quantity: float, status: str):
+    async def add_order_to_history(self, bot_id: int, order_id: str, order_type: str, isInitial: bool, price: float, quantity: float, status: str):
         """Adds a new order to the order history."""
         try:
             async with async_session() as session:
                 order_history = OrderHistory(
+                    bot_id=bot_id,
                     order_id=str(order_id),
                     order_type=order_type.lower(),
+                    isInitial=isInitial,
                     price=price,
                     quantity=quantity,
                     status=status,
@@ -1205,12 +1231,12 @@ class GridStrategy:
             await self.trades_logger.panic(f"Error adding order to history: {e}")
             raise
 
-    async def update_order_history(self, order_id: str, new_status: str):
+    async def update_order_history(self, bot_id: int, order_id: str, new_status: str):
         """Updates the status of an order in the order history."""
         try:
             async with async_session() as session:
                 result = await session.execute(
-                    select(OrderHistory).where(OrderHistory.order_id == str(order_id))
+                    select(OrderHistory).where(OrderHistory.order_id == str(order_id), OrderHistory.bot_id == bot_id)
                 )
                 order = result.scalar_one_or_none()
                 
@@ -1262,7 +1288,13 @@ class GridStrategy:
                 unrealized_profit_b += profit_b
 
         # Convert BTC unrealized profit to USDT
-        total_unrealized_profit_usdt = unrealized_profit_a + (unrealized_profit_b * self.current_price)
+        if self.current_price is None:
+            self.trades_logger.log("current_price is None. Setting default value to 0.")
+            current_price = 0
+        else:
+            current_price = self.current_price
+
+        total_unrealized_profit_usdt = unrealized_profit_a + (unrealized_profit_b * current_price)
 
         result = {
             "unrealized_profit_a": unrealized_profit_a,

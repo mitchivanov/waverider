@@ -48,9 +48,6 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# Store bot instance
-bot_instance: Dict[str, GridStrategy] = {}
-
 # Хранилище KlineManager по WebSocket соединениям
 kline_managers: Dict[int, KlineManager] = {}
 kline_tasks: Dict[int, asyncio.Task] = {}
@@ -60,11 +57,9 @@ kline_tasks: Dict[int, asyncio.Task] = {}
 async def startup_event():
     await init_db()
 
-@app.post("/api/bot/start")
-async def start_bot(params: TradingParameters):
+@app.post("/api/bot/{bot_id}/start")
+async def start_bot(bot_id: int, params: TradingParameters):
     try:
-        await clear_database()
-        
         parameters = {
             "symbol": params.symbol,
             "asset_a_funds": params.asset_a_funds,
@@ -77,49 +72,55 @@ async def start_bot(params: TradingParameters):
             "only_profitable_trades": params.only_profitable_trades
         }
         
-        await TradingBotManager.start_bot(parameters)
-        return {"status": "Bot started successfully"}
+        await TradingBotManager.start_bot(bot_id, parameters)
+        return {"status": "Bot started successfully", "bot_id": bot_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/bot/stop")
-async def stop_bot():
+@app.post("/api/bot/{bot_id}/stop")
+async def stop_bot(bot_id: int):
     try:
-        await TradingBotManager.stop_bot()
-        return {"status": "Bot stopped successfully"}
+        await TradingBotManager.stop_bot(bot_id)
+        return {"status": "Bot stopped successfully", "bot_id": bot_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: List[WebSocket] = []
+        self.active_connections: Dict[int, Dict[str, WebSocket]] = {}
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, bot_id: int, connection_id: str):
         await websocket.accept()
-        self.active_connections.append(websocket)
+        if bot_id not in self.active_connections:
+            self.active_connections[bot_id] = {}
+        self.active_connections[bot_id][connection_id] = websocket
 
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+    def disconnect(self, websocket: WebSocket, bot_id: int, connection_id: str):
+        if bot_id in self.active_connections:
+            if connection_id in self.active_connections[bot_id]:
+                del self.active_connections[bot_id][connection_id]
+            if not self.active_connections[bot_id]:
+                del self.active_connections[bot_id]
 
-    async def broadcast(self, message: dict):
-        disconnected = []
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception as e:
-                ws_logger.error(f"Ошибка при отправке сообщения: {e}")
-                disconnected.append(connection)
-        for connection in disconnected:
-            self.disconnect(connection)
+    async def broadcast(self, bot_id: int, message: dict):
+        if bot_id in self.active_connections:
+            disconnected = []
+            for connection_id, websocket in self.active_connections[bot_id].items():
+                try:
+                    await websocket.send_json(message)
+                except Exception as e:
+                    ws_logger.error(f"Ошибка при отправке сообщения для бота {bot_id}, соединение {connection_id}: {e}")
+                    disconnected.append((connection_id, websocket))
+            for connection_id, websocket in disconnected:
+                self.disconnect(websocket, bot_id, connection_id)
 
 manager = ConnectionManager()
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
-    ws_logger.info(f"WebSocket подключен: {websocket.client}")
+@app.websocket("/ws/{bot_id}")
+async def websocket_endpoint(websocket: WebSocket, bot_id: int):
+    await manager.connect(websocket, bot_id)
+    ws_logger.info(f"WebSocket подключен: {websocket.client} для бота {bot_id}")
     connection_id = id(websocket)  # Уникальный идентификатор для соединения
 
     try:
@@ -207,15 +208,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         pass  # Нет новых сообщений
 
                 # Основной цикл для отправки других данных (например, статуса, ордеров и т.д.)
-                parameters = await TradingBotManager.get_current_parameters()
+                parameters = await TradingBotManager.get_current_parameters(bot_id)
                 if parameters is None:
                     await asyncio.sleep(1)
                     continue
-                
-########################################################################################################################################################################    
-                # Получеие последних свечей
-                
-                
+
+                # Получение последних свечей
                 current_timestamp = int(datetime.datetime.utcnow().timestamp())
                 candle_time = current_timestamp - (current_timestamp % candle_interval)
 
@@ -238,7 +236,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             "volume": ohlc["volume"]
                         }
                     }
-                    await manager.broadcast(candle_data)
+                    await manager.broadcast(bot_id, candle_data)
                     ws_logger.debug(f"Отправлено candle_data: {json.dumps(candle_data)}")
 
                     # Сброс OHLV для новой свечи
@@ -252,18 +250,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     last_candle_time = candle_time
                 else:
                     # Обновление текущей свечи
-                    ohlc["close"] = parameters["current_price"]
-                    ohlc["high"] = max(ohlc["high"], parameters["current_price"])
-                    ohlc["low"] = min(ohlc["low"], parameters["current_price"])
-                    # ohlc["volume"] += trade_volume  # Обновите объем при необходимости    
-
-
-
-
-########################################################################################################################################################################    
-
-
-
+                    if parameters.get("current_price") is not None:
+                        ohlc["close"] = parameters["current_price"]
+                        ohlc["high"] = max(ohlc["high"], parameters["current_price"])
+                        ohlc["low"] = min(ohlc["low"], parameters["current_price"])
+                        # ohlc["volume"] += trade_volume  # Обновите объем при необходимости
+                    else:
+                        ws_logger.warning("current_price is None, не обновляем свечу")
 
                 # Отправляем статус
                 status_update = {
@@ -272,24 +265,24 @@ async def websocket_endpoint(websocket: WebSocket):
                         "status": parameters["status"],
                         "current_price": parameters["current_price"],
                         "deviation": parameters["deviation"],
-                        
+
                         "realized_profit_a": parameters["realized_profit_a"],
                         "realized_profit_b": parameters["realized_profit_b"],
                         "total_profit_usdt": parameters["total_profit_usdt"],
-                        
+
                         "active_orders_count": parameters["active_orders_count"],
                         "completed_trades_count": parameters["completed_trades_count"],
-                        
+
                         "running_time": parameters["running_time"],
 
                         "unrealized_profit_a": parameters["unrealized_profit_a"],
                         "unrealized_profit_b": parameters["unrealized_profit_b"],
                         "unrealized_profit_usdt": parameters["unrealized_profit_usdt"],
-                        
+
                         "initial_parameters": parameters["initial_parameters"],
                     }
                 }
-                await manager.broadcast(status_update)
+                await manager.broadcast(bot_id, status_update)
 
                 # Отправляем данные об ордерах и сделках
                 active_orders_data = [
@@ -301,7 +294,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "quantity": order.quantity,
                         "created_at": order.created_at.isoformat()
                     }
-                    for order in await TradingBotManager.get_active_orders_list()
+                    for order in await TradingBotManager.get_active_orders_list(bot_id)
                 ]
 
                 all_trades_data = [
@@ -317,40 +310,44 @@ async def websocket_endpoint(websocket: WebSocket):
                         "sell_order_id": trade.sell_order_id,
                         "executed_at": trade.executed_at.isoformat()
                     }
-                    for trade in await TradingBotManager.get_all_trades_list()
+                    for trade in await TradingBotManager.get_all_trades_list(bot_id)
                 ]
 
                 order_history_data = [
                     {
                         "order_id": order.order_id,
                         "order_type": order.order_type,
+                        "isInitial": order.isInitial,
                         "price": order.price,
                         "quantity": order.quantity,
                         "status": order.status,
                         "created_at": order.created_at.isoformat(),
                         "updated_at": order.updated_at.isoformat()
                     }
-                    for order in await TradingBotManager.get_order_history_list()
+                    for order in await TradingBotManager.get_order_history_list(bot_id)
                 ]
 
-                await manager.broadcast({"type": "active_orders_data", "payload": active_orders_data})
-                
-                await manager.broadcast({"type": "all_trades_data", "payload": all_trades_data})
-                
-                await manager.broadcast({"type": "order_history_data", "payload": order_history_data})
+                await manager.broadcast(bot_id, {"type": "active_orders_data", "payload": active_orders_data})
+
+                await manager.broadcast(bot_id, {"type": "all_trades_data", "payload": all_trades_data})
+
+                await manager.broadcast(bot_id, {"type": "order_history_data", "payload": order_history_data})
 
                 await asyncio.sleep(1)
+            except TypeError as e:
+                ws_logger.error(f"TypeError при отправке обновлений: {e}", exc_info=True)
+                # Не разрываем WebSocket, продолжаем работу
             except Exception as e:
                 ws_logger.error(f"Ошибка при отправке обновлений: {e}", exc_info=True)
                 break
     except WebSocketDisconnect:
         ws_logger.info(f"WebSocket отключен: {websocket.client}")
-        manager.disconnect(websocket)
+        manager.disconnect(websocket, bot_id)
     except Exception as e:
         ws_logger.error(f"Ошибка WebSocket: {e}", exc_info=True)
     finally:
         ws_logger.info(f"WebSocket соединение закрыто: {websocket.client}")
-        manager.disconnect(websocket)
+        manager.disconnect(websocket, bot_id)
         # Останавливаем KlineManager для этого соединения
         if connection_id in kline_managers:
             await kline_managers[connection_id].stop()
@@ -361,12 +358,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    if "bot" in bot_instance:
+    # Останавливаем все активные боты
+    for bot_id in list(TradingBotManager._bots.keys()):
         try:
-            bot_instance["bot"].stop()
-            await bot_instance["bot"].close()
+            await TradingBotManager.stop_bot(bot_id)
         except Exception as e:
-            logging.error(f"Error during shutdown: {e}")
+            logging.error(f"Error stopping bot {bot_id} during shutdown: {e}")
     
     # Останавливаем все KlineManager
     for manager_instance in kline_managers.values():
@@ -377,22 +374,52 @@ async def shutdown_event():
             await task
         except asyncio.CancelledError:
             pass
-async def clear_database():
-    """Очищает все таблицы в базе данных."""
+async def clear_database(bot_id):
+    """Очищает таблицы в базе данных для конкретного бота или все таблицы."""
     async with async_session() as session:
         try:
-            # Очищаем таблицу активных ордеров
-            await session.execute(delete(ActiveOrder))
-            # Очищаем таблицу истории торгов
-            await session.execute(delete(TradeHistory))
-            # Очищаем таблицу истории ордеров
-            await session.execute(delete(OrderHistory))
+            if bot_id is not None:
+                # Очищаем данные только для конкретного бота
+                await session.execute(delete(ActiveOrder).where(ActiveOrder.bot_id == bot_id))
+                await session.execute(delete(TradeHistory).where(TradeHistory.bot_id == bot_id))
+                await session.execute(delete(OrderHistory).where(OrderHistory.bot_id == bot_id))
+            else:
+                # Очищаем все данные
+                await session.execute(delete(ActiveOrder))
+                await session.execute(delete(TradeHistory))
+                await session.execute(delete(OrderHistory))
             await session.commit()
-            logging.info("База данных успешно очищена")
+            logging.info(f"База данных успешно очищена{f' для бота {bot_id}' if bot_id else ''}")
         except Exception as e:
             await session.rollback()
             logging.error(f"Ошибка при очистке базы данных: {e}")
             raise
+
+@app.get("/api/bots")
+async def get_bots():
+    """Возвращает список всех активных ботов"""
+    try:
+        bots = await TradingBotManager.get_all_bots()
+        return {"bots": [
+            {
+                "id": bot_id,
+                "status": await TradingBotManager.get_bot_status(bot_id),
+                "uptime": await TradingBotManager.get_bot_uptime(bot_id)
+            }
+            for bot_id in bots
+        ]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/bot/{bot_id}")
+async def delete_bot(bot_id: int):
+    """Останавливает бота и удаляет его данные из базы"""
+    try:
+        await TradingBotManager.stop_bot(bot_id)
+        await clear_database(bot_id)
+        return {"status": "Bot deleted successfully", "bot_id": bot_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

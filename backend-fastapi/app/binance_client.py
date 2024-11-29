@@ -10,10 +10,11 @@ from aiohttp import TCPConnector
 from asyncio import Semaphore
 
 class BinanceClient:
-    def __init__(self, api_key: str, api_secret: str, testnet: bool = True):
+    def __init__(self, api_key: str, api_secret: str, testnet: bool = True, bot_id: int = None):
         self.api_key = api_key
         self.api_secret = api_secret
         self.testnet = testnet
+        self.bot_id = bot_id
         
         # Configure connection pooling and timeouts
         connector = TCPConnector(
@@ -59,11 +60,12 @@ class BinanceClient:
             ticker = self.client.get_symbol_ticker(symbol=symbol)
             return float(ticker['price'])
         except (BinanceAPIException, BinanceRequestException) as e:
-            print(f"An error occurred while fetching the current price from Binance: {str(e)}")
-            print(f"Error type: {type(e).__name__}")
-            print(f"Error code: {getattr(e, 'code', 'N/A')}")
-            print(f"Error message: {getattr(e, 'message', str(e))}")
-            return None
+            logging.error(f"An error occurred while fetching the current price from Binance: {str(e)}")
+            logging.error(f"Error type: {type(e).__name__}")
+            logging.error(f"Error code: {getattr(e, 'code', 'N/A')}")
+            logging.error(f"Error message: {getattr(e, 'message', str(e))}")
+            # Вместо возврата None можно выбросить исключение
+            raise
 
     def place_order(self, symbol: str, side: str, quantity: float, order_type: str = 'MARKET'):
         """Place an order on Binance."""
@@ -215,15 +217,18 @@ class BinanceClient:
                 if response.status == 200:
                     data = await response.json()
                     return float(data['price'])
-                return None
+                logging.error(f"Failed to fetch price: {await response.text()}")
+                # Вместо возврата None можно выбросить исключение
+                raise ValueError("Failed to fetch price")
         except Exception as e:
             logging.error(f"Error fetching price: {str(e)}")
-            return None
+            raise
 
     async def close(self):
-        """Properly close the session."""
-        if not self.session.closed:
+        """Close the client session."""
+        if hasattr(self, 'session') and not self.session.closed:
             await self.session.close()
+            logging.info(f"Closed BinanceClient session for bot {self.bot_id}")
 
     async def get_account_async(self):
         """Get account information asynchronously."""

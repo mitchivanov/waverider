@@ -4,8 +4,8 @@ import { TradingParameters } from '../types';
 
 const defaultParams: TradingParameters = {
   symbol: "BTCUSDT",
-  asset_a_funds: 700,
-  asset_b_funds: 0.01,
+  asset_a_funds: 5000,
+  asset_b_funds: 0.05,
   grids: 10,
   deviation_threshold: 0.004,
   growth_factor: 0.5,
@@ -16,7 +16,8 @@ const defaultParams: TradingParameters = {
 
 export const BotControl: React.FC = () => {
   const [params, setParams] = useState<TradingParameters>(defaultParams);
-  const [isLoading, setIsLoading] = useState(false); // Adding loading state
+  const [isLoading, setIsLoading] = useState(false); // Loading state
+  const [isBotRunning, setIsBotRunning] = useState(false); // Bot running state
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value, type, checked } = e.target;
@@ -31,6 +32,7 @@ export const BotControl: React.FC = () => {
       setIsLoading(true);
       await botService.start(params);
       alert('Bot started successfully');
+      setIsBotRunning(true);
     } catch (error) {
       alert('Error starting bot');
     } finally {
@@ -43,6 +45,7 @@ export const BotControl: React.FC = () => {
       setIsLoading(true);
       await botService.stop();
       alert('Bot stopped successfully');
+      setIsBotRunning(false);
     } catch (error) {
       console.error('Error stopping bot:', error);
       alert('Error stopping bot: ' + (error as Error).message);
@@ -65,6 +68,7 @@ export const BotControl: React.FC = () => {
               onChange={handleInputChange}
               className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
+              disabled={isBotRunning}
             />
           </div>
 
@@ -78,6 +82,7 @@ export const BotControl: React.FC = () => {
               className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
               min="0"
+              disabled={isBotRunning}
             />
           </div>
 
@@ -92,6 +97,7 @@ export const BotControl: React.FC = () => {
               required
               min="0"
               step="0.0001"
+              disabled={isBotRunning}
             />
           </div>
 
@@ -105,6 +111,7 @@ export const BotControl: React.FC = () => {
               className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
               min="1"
+              disabled={isBotRunning}
             />
           </div>
 
@@ -119,6 +126,7 @@ export const BotControl: React.FC = () => {
               className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
               min="0"
+              disabled={isBotRunning}
             />
           </div>
 
@@ -133,59 +141,66 @@ export const BotControl: React.FC = () => {
               className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
               min="0"
+              disabled={isBotRunning}
             />
           </div>
 
-          <div className="form-group checkbox flex items-center space-x-2">
+          <div className="form-group flex items-center space-x-2">
             <input
               type="checkbox"
               name="use_granular_distribution"
               checked={params.use_granular_distribution}
               onChange={handleInputChange}
               className="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+              disabled={isBotRunning}
             />
             <label className="text-gray-300">Use Granular Distribution</label>
           </div>
 
-          <div className="form-group checkbox flex items-center space-x-2">
+          <div className="form-group flex items-center space-x-2">
             <input
               type="checkbox"
               name="trail_price"
               checked={params.trail_price}
               onChange={handleInputChange}
               className="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+              disabled={isBotRunning}
             />
             <label className="text-gray-300">Trail Price</label>
           </div>
 
-          <div className="form-group checkbox flex items-center space-x-2">
+          <div className="form-group flex items-center space-x-2">
             <input
               type="checkbox"
               name="only_profitable_trades"
               checked={params.only_profitable_trades}
               onChange={handleInputChange}
               className="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+              disabled={isBotRunning}
             />
             <label className="text-gray-300">Only Profitable Trades</label>
           </div>
         </div>
 
         <div className="button-group flex space-x-4 mt-4">
-          <button 
-            type="submit" 
-            className={`start-button px-4 py-2 rounded-md text-white font-semibold ${isLoading ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
-            disabled={isLoading}
-          >
-            {isLoading ? 'Starting...' : 'Start Bot'}
-          </button>
-          <button 
-            type="button" 
-            onClick={handleStop} 
-            className={`stop-button px-4 py-2 rounded-md text-white font-semibold ${isLoading ? 'bg-red-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}`}
-            disabled={isLoading}
-          >
-            {isLoading ? 'Stopping...' : 'Stop Bot'}
-          </button>
+          {!isBotRunning ? (
+            <button 
+              type="submit" 
+              className={`start-button px-4 py-2 rounded-md text-white font-semibold ${isLoading ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
+              disabled={isLoading}
+            >
+              {isLoading ? 'Starting...' : 'Start Bot'}
+            </button>
+          ) : (
+            <button 
+              type="button" 
+              onClick={handleStop} 
+              className={`stop-button px-4 py-2 rounded-md text-white font-semibold ${isLoading ? 'bg-red-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}`}
+              disabled={isLoading}
+            >
+              {isLoading ? 'Stopping...' : 'Stop Bot'}
+            </button>
+          )}
         </div>
       </form>
     </div>

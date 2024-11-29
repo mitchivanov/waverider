@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import useWebSocket from 'react-use-websocket';
-import { OrderHistory as OrderHistoryType } from '../types';
-import { botService } from '../services/api';
+import { OrderHistory as OrderHistoryType } from '../../../new-frontend/src/types';
+import { botService } from '../../../new-frontend/src/services/api';
 
 export const OrderHistory: React.FC = () => {
   const [orders, setOrders] = useState<OrderHistoryType[]>([]);

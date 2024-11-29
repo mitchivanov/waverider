@@ -15,54 +15,55 @@ logging.basicConfig(
 )
 
 class TradingBotManager:
-    _instance: Optional[GridStrategy] = None
-    _bot_task: Optional[asyncio.Task] = None
-    _start_time: Optional[datetime.datetime] = None
+    _bots: Dict[int, GridStrategy] = {}
+    _tasks: Dict[int, asyncio.Task] = {}
+    _start_times: Dict[int, datetime.datetime] = {}
 
     @classmethod
-    async def is_running(cls) -> bool:
-        return cls._instance is not None
+    async def is_running(cls, bot_id: int) -> bool:
+        return bot_id in cls._bots
 
     @classmethod
-    async def start_bot(cls, parameters: dict):
+    async def start_bot(cls, bot_id: int, parameters: dict):
         try:
-            if await cls.is_running():
-                await cls.stop_bot()
+            if await cls.is_running(bot_id):
+                await cls.stop_bot(bot_id)
             
-            cls._instance = await start_grid_strategy(parameters)
-            cls._start_time = datetime.datetime.now()
+            strategy = await start_grid_strategy(parameters)
+            cls._bots[bot_id] = strategy
+            cls._start_times[bot_id] = datetime.datetime.now()
             
-            logging.info("Бот успешно запущен")
+            logging.info(f"Бот {bot_id} успешно запущен")
             return True
         except Exception as e:
-            logging.error(f"Ошибка при запуске бота: {e}")
+            logging.error(f"Ошибка при запуске бота {bot_id}: {e}")
             raise e
 
     @classmethod
-    async def stop_bot(cls):
-        logging.info("Stopping bot")
-        if cls._instance:
+    async def stop_bot(cls, bot_id: int):
+        if bot_id in cls._bots:
             try:
-                logging.info("Stopping grid strategy")
-                await stop_grid_strategy(cls._instance)
-                cls._instance = None
-                cls._start_time = None
-                cls._bot_task = None
+                logging.info(f"Останавливаем бот {bot_id}")
+                await stop_grid_strategy(cls._bots[bot_id])
+                del cls._bots[bot_id]
+                if bot_id in cls._start_times:
+                    del cls._start_times[bot_id]
+                if bot_id in cls._tasks:
+                    cls._tasks[bot_id].cancel()
+                    del cls._tasks[bot_id]
                 
-                logging.info("Бот успешно остановлен")
+                logging.info(f"Бот {bot_id} успешно остановлен")
                 return True
             except Exception as e:
-            
-                logging.error(f"Ошибка при остановке бота: {e}")
+                logging.error(f"Ошибка при остановке бота {bot_id}: {e}")
                 raise
 
     @classmethod
-    async def get_current_parameters(cls) -> Optional[dict]:
-        if cls._instance:
-            # Получаем статус стратегии и ожидаем результат
-            parameters = await cls._instance.get_strategy_status()
-            
+    async def get_current_parameters(cls, bot_id: int) -> Optional[dict]:
+        if bot_id in cls._bots:
+            parameters = await cls._bots[bot_id].get_strategy_status()
             return {
+                "bot_id": bot_id,
                 "status": parameters["status"],
                 "current_price": parameters["current_price"],
                 "initial_price": parameters["initial_price"],
@@ -86,13 +87,13 @@ class TradingBotManager:
             }
         return None
 
-
     @classmethod
-    async def get_active_orders_list(cls) -> List[ActiveOrder]:
+    async def get_active_orders_list(cls, bot_id: int) -> List[ActiveOrder]:
         async with async_session() as session:
-            result_orders = await session.execute(select(ActiveOrder))
-            active_orders = result_orders.scalars().all()
-            return list(active_orders)
+            result_orders = await session.execute(
+                select(ActiveOrder).where(ActiveOrder.bot_id == bot_id)
+            )
+            return list(result_orders.scalars().all())
     
     @classmethod
     async def get_all_trades_list(cls) -> List[TradeHistory]:
@@ -107,3 +108,22 @@ class TradingBotManager:
             result = await session.execute(select(OrderHistory))
             order_history = result.scalars().all()
             return list(order_history)
+
+    @classmethod
+    async def get_all_bots(cls) -> List[int]:
+        """Возвращает список ID всех активных ботов"""
+        return list(cls._bots.keys())
+
+    @classmethod
+    async def get_bot_status(cls, bot_id: int) -> Optional[str]:
+        """Возвращает статус конкретного бота"""
+        if bot_id in cls._bots:
+            return "active"
+        return None
+
+    @classmethod
+    async def get_bot_uptime(cls, bot_id: int) -> Optional[float]:
+        """Возвращает время работы бота в секундах"""
+        if bot_id in cls._start_times:
+            return (datetime.datetime.now() - cls._start_times[bot_id]).total_seconds()
+        return None
