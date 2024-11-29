@@ -17,6 +17,7 @@ from database import async_session
 from models.models import TradeHistory, ActiveOrder, OrderHistory
 from sqlalchemy import update
 import aiofiles
+from strategies.base_strategy import BaseStrategy
 
 # Configure logging for the entire application
 logging.basicConfig(
@@ -94,11 +95,14 @@ class AsyncLogger:
         while not self.queue.empty():
             await asyncio.sleep(0.1)
 
-class GridStrategy:
+class GridStrategy(BaseStrategy):
     def __init__(
         self,
         bot_id,
         symbol,
+        api_key,
+        api_secret,
+        testnet,
         asset_a_funds,
         asset_b_funds,
         grids,
@@ -111,15 +115,11 @@ class GridStrategy:
         self.bot_id = bot_id
         # Securely retrieve API credentials from environment variables
         
-        api_key = '55euYhdLmx17qhTB1KhBSbrsS3A79bYU0C408VHMYsTTMcsyfSMboJ1d1uEWNLq3'
-        api_secret = '2zlWvVVQIrj5ZryMNCkt9KIqowlQQMdG0bcV4g4LAinOnF8lc7O3Udumn6rIAyLb'
+        #api_key = '55euYhdLmx17qhTB1KhBSbrsS3A79bYU0C408VHMYsTTMcsyfSMboJ1d1uEWNLq3'
+        #api_secret = '2zlWvVVQIrj5ZryMNCkt9KIqowlQQMdG0bcV4g4LAinOnF8lc7O3Udumn6rIAyLb'
         
-        # Ensure the API key and secret are strings
-        if not isinstance(api_key, str) or not isinstance(api_secret, str):
-            raise ValueError("API key and secret must be strings")
-
         # Initialize the Binance client with your credentials
-        self.binance_client = BinanceClient(api_key=api_key, api_secret=api_secret)
+        self.binance_client = BinanceClient(api_key=api_key, api_secret=api_secret, testnet=testnet)
         self.symbol = symbol.upper()  # Ensure symbol is in uppercase for Binance API
         self.asset_a_funds = asset_a_funds
         self.asset_b_funds = asset_b_funds

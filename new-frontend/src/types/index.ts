@@ -1,14 +1,30 @@
-export interface TradingParameters {
+export interface BaseTradingParameters {
+  type: 'grid' | 'another';
+  api_key: string;
+  api_secret: string;
+  testnet: boolean;
+}
+
+export interface GridTradingParameters extends BaseTradingParameters {
+  type: 'grid';
   symbol: string;
   asset_a_funds: number;
   asset_b_funds: number;
   grids: number;
   deviation_threshold: number;
-  trail_price: boolean;
-  only_profitable_trades: boolean;
   growth_factor: number;
   use_granular_distribution: boolean;
+  trail_price: boolean;
+  only_profitable_trades: boolean;
 }
+
+export interface AnotherTradingParameters extends BaseTradingParameters {
+  type: 'another';
+  parameter_x: number;
+  parameter_y: number;
+}
+
+export type TradingParameters = GridTradingParameters | AnotherTradingParameters;
 
 export interface PriceData {
   time: string; // ISO format date

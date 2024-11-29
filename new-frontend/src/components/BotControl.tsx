@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { botService } from '../services/api';
-import { TradingParameters } from '../types';
+import { GridTradingParameters, AnotherTradingParameters } from '../types';
+import { GridBotForm } from './GridBotForm';
 
-const defaultParams: TradingParameters = {
+const defaultGridParams: GridTradingParameters = {
+  type: 'grid',
   symbol: "BTCUSDT",
   asset_a_funds: 5000,
   asset_b_funds: 0.05,
@@ -11,20 +13,41 @@ const defaultParams: TradingParameters = {
   growth_factor: 0.5,
   use_granular_distribution: true,
   trail_price: true,
-  only_profitable_trades: false
+  only_profitable_trades: false,
+  api_key: '',
+  api_secret: '',
+  testnet: true
+};
+
+const defaultAnotherParams: AnotherTradingParameters = {
+  type: 'another',
+  parameter_x: 0,
+  parameter_y: 0,
+  api_key: '',
+  api_secret: '',
+  testnet: true
 };
 
 export const BotControl: React.FC = () => {
-  const [params, setParams] = useState<TradingParameters>(defaultParams);
-  const [isLoading, setIsLoading] = useState(false); // Loading state
-  const [isBotRunning, setIsBotRunning] = useState(false); // Bot running state
+  const [botType, setBotType] = useState<'grid' | 'another'>('grid');
+  const [params, setParams] = useState<GridTradingParameters | AnotherTradingParameters>(defaultGridParams);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isBotRunning, setIsBotRunning] = useState(false);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value, type, checked } = e.target;
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value, type } = e.target as HTMLInputElement;
     setParams(prev => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : type === 'number' ? parseFloat(value) : value
+      [name]: type === 'checkbox' ? (e.target as HTMLInputElement).checked 
+            : type === 'number' ? parseFloat(value) 
+            : value
     }));
+  };
+
+  const handleBotTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newType = e.target.value as 'grid' | 'another';
+    setBotType(newType);
+    setParams(newType === 'grid' ? defaultGridParams : defaultAnotherParams);
   };
 
   const handleStart = async () => {
@@ -34,7 +57,7 @@ export const BotControl: React.FC = () => {
       alert('Bot started successfully');
       setIsBotRunning(true);
     } catch (error) {
-      alert('Error starting bot');
+      alert('Error starting the bot');
     } finally {
       setIsLoading(false);
     }
@@ -47,8 +70,8 @@ export const BotControl: React.FC = () => {
       alert('Bot stopped successfully');
       setIsBotRunning(false);
     } catch (error) {
-      console.error('Error stopping bot:', error);
-      alert('Error stopping bot: ' + (error as Error).message);
+      console.error('Error stopping the bot:', error);
+      alert('Error stopping the bot: ' + (error as Error).message);
     } finally {
       setIsLoading(false);
     }
@@ -59,12 +82,26 @@ export const BotControl: React.FC = () => {
       <h2 className="text-2xl font-semibold text-white mb-4">Bot Control</h2>
       <form onSubmit={(e) => { e.preventDefault(); handleStart(); }}>
         <div className="form-grid grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="form-group col-span-2">
+            <label className="block text-gray-300 mb-2">Bot Type:</label>
+            <select
+              name="type"
+              value={botType}
+              onChange={handleBotTypeChange}
+              className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md"
+              disabled={isBotRunning}
+            >
+              <option value="grid">Grid Trading Bot</option>
+              <option value="another">Another Strategy Bot</option>
+            </select>
+          </div>
+
           <div className="form-group">
-            <label className="block text-gray-300 mb-2">Trading Pair:</label>
+            <label className="block text-gray-300 mb-2">API Key:</label>
             <input
               type="text"
-              name="symbol"
-              value={params.symbol}
+              name="api_key"
+              value={params.api_key}
               onChange={handleInputChange}
               className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
@@ -73,74 +110,14 @@ export const BotControl: React.FC = () => {
           </div>
 
           <div className="form-group">
-            <label className="block text-gray-300 mb-2">Asset A Funds:</label>
+            <label className="block text-gray-300 mb-2">API Secret:</label>
             <input
-              type="number"
-              name="asset_a_funds"
-              value={params.asset_a_funds}
+              type="password"
+              name="api_secret"
+              value={params.api_secret}
               onChange={handleInputChange}
               className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
-              min="0"
-              disabled={isBotRunning}
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="block text-gray-300 mb-2">Asset B Funds:</label>
-            <input
-              type="number"
-              name="asset_b_funds"
-              value={params.asset_b_funds}
-              onChange={handleInputChange}
-              className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-              min="0"
-              step="0.0001"
-              disabled={isBotRunning}
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="block text-gray-300 mb-2">Number of Grids:</label>
-            <input
-              type="number"
-              name="grids"
-              value={params.grids}
-              onChange={handleInputChange}
-              className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-              min="1"
-              disabled={isBotRunning}
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="block text-gray-300 mb-2">Deviation Threshold:</label>
-            <input
-              type="number"
-              name="deviation_threshold"
-              step="0.001"
-              value={params.deviation_threshold}
-              onChange={handleInputChange}
-              className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-              min="0"
-              disabled={isBotRunning}
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="block text-gray-300 mb-2">Growth Factor:</label>
-            <input
-              type="number"
-              name="growth_factor"
-              step="0.1"
-              value={params.growth_factor}
-              onChange={handleInputChange}
-              className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-              min="0"
               disabled={isBotRunning}
             />
           </div>
@@ -148,38 +125,26 @@ export const BotControl: React.FC = () => {
           <div className="form-group flex items-center space-x-2">
             <input
               type="checkbox"
-              name="use_granular_distribution"
-              checked={params.use_granular_distribution}
+              name="testnet"
+              checked={params.testnet}
               onChange={handleInputChange}
-              className="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+              className="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded"
               disabled={isBotRunning}
             />
-            <label className="text-gray-300">Use Granular Distribution</label>
+            <label className="text-gray-300">Use Testnet</label>
           </div>
 
-          <div className="form-group flex items-center space-x-2">
-            <input
-              type="checkbox"
-              name="trail_price"
-              checked={params.trail_price}
-              onChange={handleInputChange}
-              className="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
-              disabled={isBotRunning}
+          {botType === 'grid' ? (
+            <GridBotForm 
+              params={params as GridTradingParameters}
+              handleInputChange={handleInputChange}
+              isBotRunning={isBotRunning}
             />
-            <label className="text-gray-300">Trail Price</label>
-          </div>
-
-          <div className="form-group flex items-center space-x-2">
-            <input
-              type="checkbox"
-              name="only_profitable_trades"
-              checked={params.only_profitable_trades}
-              onChange={handleInputChange}
-              className="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
-              disabled={isBotRunning}
-            />
-            <label className="text-gray-300">Only Profitable Trades</label>
-          </div>
+          ) : (
+            <div className="col-span-2 text-gray-300">
+              The form for another strategy will be available soon.
+            </div>
+          )}
         </div>
 
         <div className="button-group flex space-x-4 mt-4">

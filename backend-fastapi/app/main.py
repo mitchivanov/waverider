@@ -1,22 +1,26 @@
-from fastapi import FastAPI, APIRouter, WebSocket, WebSocketDisconnect, HTTPException
-from typing import Dict, List, Set, Optional, Callable
+import asyncio
+import datetime
+import json
 import logging
 import uvicorn
-from gridstrat import GridStrategy
+from database import async_session, init_db
+from fastapi import FastAPI, APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from database import init_db
-import datetime
-from manager import TradingBotManager
-from database import async_session
-from sqlalchemy.future import select
-from models.models import ActiveOrder, TradeHistory, OrderHistory
-import asyncio
-from sqlalchemy import delete
-from models.models import TradingParameters
-import json
-from starlette.websockets import WebSocketState
-
+from strategies.gridstrat import GridStrategy
+#from strategies.otherstrat import OtherStrategy  # Импорт других стратегий
 from kline_manager import KlineManager
+from manager import TradingBotManager
+from models.models import (
+    BaseBot, 
+    GridBotConfig, 
+    ActiveOrder, 
+    TradeHistory, 
+    OrderHistory
+)
+from sqlalchemy import delete, func
+from sqlalchemy.future import select
+from starlette.websockets import WebSocketState
+from typing import Dict, List, Set, Optional, Callable, Union
 
 # Отключаем ненужные логи
 logging.getLogger('websockets').setLevel(logging.ERROR)
@@ -36,7 +40,7 @@ ws_logger.setLevel(logging.DEBUG)
 router = APIRouter()
 active_connections: Set[WebSocket] = set()
 
-app = FastAPI(title="Grid Trading Bot")
+app = FastAPI(title="Trading Bot Manager")
 app.include_router(router)
 
 # Настройка CORS
@@ -52,29 +56,39 @@ app.add_middleware(
 kline_managers: Dict[int, KlineManager] = {}
 kline_tasks: Dict[int, asyncio.Task] = {}
 
-
 @app.on_event("startup")
 async def startup_event():
     await init_db()
 
-@app.post("/api/bot/{bot_id}/start")
-async def start_bot(bot_id: int, params: TradingParameters):
+@app.post("/api/bot/start")
+async def start_bot(params: dict):
     try:
-        parameters = {
-            "symbol": params.symbol,
-            "asset_a_funds": params.asset_a_funds,
-            "asset_b_funds": params.asset_b_funds,
-            "grids": params.grids,
-            "deviation_threshold": params.deviation_threshold,
-            "growth_factor": params.growth_factor,
-            "use_granular_distribution": params.use_granular_distribution,
-            "trail_price": params.trail_price,
-            "only_profitable_trades": params.only_profitable_trades
-        }
-        
-        await TradingBotManager.start_bot(bot_id, parameters)
-        return {"status": "Bot started successfully", "bot_id": bot_id}
+        async with async_session() as session:
+            # Создаем бота в БД
+            bot = BaseBot(
+                name=f"Bot_{params['symbol']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                type=params['type'],
+                symbol=params['symbol'],
+                api_key=params['api_key'],
+                api_secret=params['api_secret'],
+                testnet=params.get('testnet', True),
+                status='active'
+            )
+            session.add(bot)
+            await session.commit()
+            await session.refresh(bot)
+            
+            # Запускаем бота через менеджер
+            await TradingBotManager.start_bot(
+                bot_id=bot.id,
+                bot_type=params['type'],
+                parameters=params
+            )
+            
+            return {"status": "success", "bot_id": bot.id}
+            
     except Exception as e:
+        logging.error(f"Ошибка при создании бота: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/bot/{bot_id}/stop")
@@ -84,7 +98,6 @@ async def stop_bot(bot_id: int):
         return {"status": "Bot stopped successfully", "bot_id": bot_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 class ConnectionManager:
     def __init__(self):
@@ -119,9 +132,9 @@ manager = ConnectionManager()
 
 @app.websocket("/ws/{bot_id}")
 async def websocket_endpoint(websocket: WebSocket, bot_id: int):
-    await manager.connect(websocket, bot_id)
+    await manager.connect(websocket, bot_id, str(id(websocket)))
     ws_logger.info(f"WebSocket подключен: {websocket.client} для бота {bot_id}")
-    connection_id = id(websocket)  # Уникальный идентификатор для соединения
+    connection_id = str(id(websocket))  # Уникальный идентификатор для соединения
 
     try:
         # Ожидаем получения параметров подписки от клиента
@@ -166,11 +179,6 @@ async def websocket_endpoint(websocket: WebSocket, bot_id: int):
 
         while True:
             try:
-                
-                # WebSocketState.CLOSED (0): Соединение закрыто.
-                # WebSocketState.CONNECTING (1): Соединение устанавливается.
-                # WebSocketState.OPEN (2): Соединение открыто и активно.
-
                 # Проверяем наличие новых сообщений от клиента
                 if websocket.client_state == WebSocketState.DISCONNECTED:
                     break
@@ -208,6 +216,7 @@ async def websocket_endpoint(websocket: WebSocket, bot_id: int):
                         pass  # Нет новых сообщений
 
                 # Основной цикл для отправки других данных (например, статуса, ордеров и т.д.)
+                bot = await TradingBotManager.get_bot_by_id(bot_id)
                 parameters = await TradingBotManager.get_current_parameters(bot_id)
                 if parameters is None:
                     await asyncio.sleep(1)
@@ -328,9 +337,7 @@ async def websocket_endpoint(websocket: WebSocket, bot_id: int):
                 ]
 
                 await manager.broadcast(bot_id, {"type": "active_orders_data", "payload": active_orders_data})
-
                 await manager.broadcast(bot_id, {"type": "all_trades_data", "payload": all_trades_data})
-
                 await manager.broadcast(bot_id, {"type": "order_history_data", "payload": order_history_data})
 
                 await asyncio.sleep(1)
@@ -342,12 +349,12 @@ async def websocket_endpoint(websocket: WebSocket, bot_id: int):
                 break
     except WebSocketDisconnect:
         ws_logger.info(f"WebSocket отключен: {websocket.client}")
-        manager.disconnect(websocket, bot_id)
+        manager.disconnect(websocket, bot_id, connection_id)
     except Exception as e:
         ws_logger.error(f"Ошибка WebSocket: {e}", exc_info=True)
     finally:
         ws_logger.info(f"WebSocket соединение закрыто: {websocket.client}")
-        manager.disconnect(websocket, bot_id)
+        manager.disconnect(websocket, bot_id, connection_id)
         # Останавливаем KlineManager для этого соединения
         if connection_id in kline_managers:
             await kline_managers[connection_id].stop()
@@ -374,7 +381,8 @@ async def shutdown_event():
             await task
         except asyncio.CancelledError:
             pass
-async def clear_database(bot_id):
+
+async def clear_database(bot_id: int):
     """Очищает таблицы в базе данных для конкретного бота или все таблицы."""
     async with async_session() as session:
         try:
@@ -384,12 +392,12 @@ async def clear_database(bot_id):
                 await session.execute(delete(TradeHistory).where(TradeHistory.bot_id == bot_id))
                 await session.execute(delete(OrderHistory).where(OrderHistory.bot_id == bot_id))
             else:
-                # Очищаем все данные
+                # Оищаем все данные
                 await session.execute(delete(ActiveOrder))
                 await session.execute(delete(TradeHistory))
                 await session.execute(delete(OrderHistory))
             await session.commit()
-            logging.info(f"База данных успешно очищена{f' для бота {bot_id}' if bot_id else ''}")
+            logging.info(f"База данных успешно очищена{' для бота ' + str(bot_id) if bot_id else ''}")
         except Exception as e:
             await session.rollback()
             logging.error(f"Ошибка при очистке базы данных: {e}")
@@ -399,15 +407,19 @@ async def clear_database(bot_id):
 async def get_bots():
     """Возвращает список всех активных ботов"""
     try:
-        bots = await TradingBotManager.get_all_bots()
-        return {"bots": [
-            {
-                "id": bot_id,
-                "status": await TradingBotManager.get_bot_status(bot_id),
-                "uptime": await TradingBotManager.get_bot_uptime(bot_id)
-            }
-            for bot_id in bots
-        ]}
+        async with async_session() as session:
+            result = await session.execute(select(BaseBot))
+            bots = result.scalars().all()
+            return {"bots": [
+                {
+                    "id": bot.id,
+                    "type": bot.type,
+                    "symbol": bot.symbol,
+                    "status": bot.status,
+                    "uptime": (datetime.datetime.now() - bot.created_at).total_seconds()
+                }
+                for bot in bots
+            ]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -417,6 +429,12 @@ async def delete_bot(bot_id: int):
     try:
         await TradingBotManager.stop_bot(bot_id)
         await clear_database(bot_id)
+        async with async_session() as session:
+            bot = await session.get(BaseBot, bot_id)
+            if bot:
+                await session.delete(bot)
+                await session.commit()
+                logging.info(f"Бот {bot_id} удален из базы данных")
         return {"status": "Bot deleted successfully", "bot_id": bot_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

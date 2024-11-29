@@ -10,7 +10,7 @@ from aiohttp import TCPConnector
 from asyncio import Semaphore
 
 class BinanceClient:
-    def __init__(self, api_key: str, api_secret: str, testnet: bool = True, bot_id: int = None):
+    def __init__(self, api_key: str, api_secret: str, testnet: bool, bot_id: int = None):
         self.api_key = api_key
         self.api_secret = api_secret
         self.testnet = testnet
