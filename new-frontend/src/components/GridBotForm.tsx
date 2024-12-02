@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { GridTradingParameters } from '../types';
+import { binanceService } from '../services/binanceService';
+import { SearchableSelect } from './SearchableSelect';
 
 interface GridBotFormProps {
   params: GridTradingParameters;
@@ -8,17 +10,56 @@ interface GridBotFormProps {
 }
 
 export const GridBotForm: React.FC<GridBotFormProps> = ({ params, handleInputChange, isBotRunning }) => {
+  const [availableAssets, setAvailableAssets] = useState<{
+    baseAssets: string[],
+    quoteAssets: string[]
+  }>({
+    baseAssets: [],
+    quoteAssets: []
+  });
+
+  useEffect(() => {
+    const loadAssets = async () => {
+      try {
+        const exchangeInfo = await binanceService.getExchangeInfo();
+        const assets = binanceService.parseExchangeInfo(exchangeInfo);
+        setAvailableAssets(assets);
+      } catch (error) {
+        console.error('Error loading assets:', error);
+      }
+    };
+
+    loadAssets();
+  }, []);
+
+  const handleSelectChange = (value: string, name: string) => {
+    handleInputChange({
+      target: { name, value }
+    } as React.ChangeEvent<HTMLInputElement>);
+  };
+
   return (
     <>
       <div className="form-group">
-        <label className="block text-gray-300 mb-2">Trading Pair:</label>
-        <input
-          type="text"
-          name="symbol"
-          value={params.symbol}
-          onChange={handleInputChange}
-          className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          required
+        <label className="block text-gray-300 mb-2">Base Asset:</label>
+        <SearchableSelect
+          options={availableAssets.baseAssets}
+          value={(params as GridTradingParameters).baseAsset}
+          onChange={handleSelectChange}
+          name="baseAsset"
+          placeholder="Choose base asset"
+          disabled={isBotRunning}
+        />
+      </div>
+
+      <div className="form-group">
+        <label className="block text-gray-300 mb-2">Quote Asset:</label>
+        <SearchableSelect
+          options={availableAssets.quoteAssets}
+          value={(params as GridTradingParameters).quoteAsset}
+          onChange={handleSelectChange}
+          name="quoteAsset"
+          placeholder="Choose quote asset"
           disabled={isBotRunning}
         />
       </div>

@@ -11,9 +11,12 @@ export const BotStatus: React.FC<BotStatusProps> = ({ botId }) => {
   const { lastMessage } = useWebSocket();
 
   useEffect(() => {
-    const statusKey = `${botId}_status_update`;
-    if (lastMessage[statusKey]) {
-      setStatus(lastMessage[statusKey].data);
+    const messageKey = `${botId}_bot_status_data`;
+    console.debug('BotStatus lastMessage:', lastMessage);
+    console.debug('BotStatus messageKey:', messageKey);
+    if (lastMessage[messageKey]) {
+      console.debug('BotStatus setting status:', lastMessage[messageKey]);
+      setStatus(lastMessage[messageKey]);
     }
   }, [lastMessage, botId]);
 

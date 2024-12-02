@@ -57,7 +57,16 @@ app.add_middleware(
 
 # Хранилище KlineManager по WebSocket соединениям
 kline_managers: Dict[int, KlineManager] = {}
-kline_tasks: Dict[int, asyncio.Task] = {}
+kline_tasks: Dict[int, asyncio.Task] = {} 
+
+active_tasks = {}  # Словарь для отслеживания активных задач
+
+async def get_task_key(bot_id: int, task_type: str) -> str:
+    return f"{bot_id}_{task_type}"
+
+async def is_task_running(bot_id: int, task_type: str) -> bool:
+    task_key = await get_task_key(bot_id, task_type)
+    return task_key in active_tasks and not active_tasks[task_key].done()
 
 @app.on_event("startup")
 async def startup_event():
@@ -67,8 +76,14 @@ async def startup_event():
 async def start_bot(params: dict):
     async with async_session() as session:
         try:
+            base_asset = params.get('baseAsset')
+            quote_asset = params.get('quoteAsset')
+            base_asset_funds = params.get('asset_b_funds')
+            quote_asset_funds = params.get('asset_a_funds')
             
-            await BinanceClient.get_account_balance_async()
+            binance_client = BinanceClient(api_key=params['api_key'], api_secret=params['api_secret'], testnet=params.get('testnet'))
+            
+            await binance_client.is_balance_sufficient(base_asset, quote_asset, base_asset_funds, quote_asset_funds)
             
             #TODO: проверка на наличие средств на балансе
 
@@ -146,24 +161,61 @@ async def websocket_endpoint(websocket: WebSocket):
                 break
 
             try:
-                # Используем receive_json() без wait_for для избежания частых таймаутов
                 subscription_message = await websocket.receive_json()
+                bot_id = subscription_message.get("bot_id")
                 msg_type = subscription_message.get("type")
+
+                if not bot_id or not msg_type:
+                    continue
+
+                task_key = await get_task_key(bot_id, msg_type)
                 
+                # Проверяем, не запущена ли уже задача этого типа
+                if await is_task_running(bot_id, msg_type):
+                    ws_logger.debug(f"Task {task_key} is already running")
+                    continue
+
+                # Создаем и запускаем новую задачу
                 if msg_type == "status":
-                    bot_id = subscription_message.get("bot_id")
-                    if bot_id:
-                        await bot_status_service(bot_id)
+                    task = asyncio.create_task(bot_status_service(bot_id))
+                elif msg_type == "active_orders":
+                    task = asyncio.create_task(active_orders_service(bot_id))
+                elif msg_type == "order_history":
+                    task = asyncio.create_task(order_history_service(bot_id))
+                elif msg_type == "trade_history":
+                    task = asyncio.create_task(trade_history_service(bot_id))
+                else:
+                    continue
+
+                # Сохраняем задачу в словаре активных задач
+                active_tasks[task_key] = task
                 
+                # Добавляем callback для удаления завершенной задачи
+                def remove_task(future):
+                    active_tasks.pop(task_key, None)
+                
+                task.add_done_callback(remove_task)
+
             except WebSocketDisconnect:
                 ws_logger.info(f"WebSocket отключен: {websocket.client}")
-                break
+                await asyncio.sleep(5)
+                try:
+                    await manager.connect(websocket)
+                    ws_logger.info(f"WebSocket переподключен: {websocket.client}")
+                except Exception as reconnect_error:
+                    ws_logger.error(f"Ошибка при переподключении: {reconnect_error}")
+                continue
             except Exception as e:
-                # Игнорируем ошибки таймаута и продолжаем цикл
+                ws_logger.error(f"Ошибка обработки сообщения: {e}")
                 await asyncio.sleep(0.1)
                 continue
-                
+
     finally:
+        # Отменяем все задачи при отключении
+        for task_key, task in list(active_tasks.items()):
+            if not task.done():
+                task.cancel()
+        active_tasks.clear()
         manager.disconnect(websocket)
         ws_logger.info(f"WebSocket соединение закрыто: {websocket.client}")
 
@@ -273,6 +325,7 @@ async def bot_status_service(bot_id: int):
     async with async_session() as session:
         while True:
             try:
+                ws_logger.debug(f"bot_status_service: bot_id = {bot_id}")
                 parameters = await TradingBotManager.get_current_parameters(bot_id)
                 if parameters is None:
                     await asyncio.sleep(5)
@@ -313,24 +366,41 @@ async def bot_status_service(bot_id: int):
 
 async def active_orders_service(bot_id: int):
     async with async_session() as session:
-        active_orders_data = [
-            {
-                "order_id": order.order_id,
-                "order_type": order.order_type,
-                "isInitial": order.isInitial,
-                "price": order.price,
-                "quantity": order.quantity,
-                "created_at": order.created_at.isoformat()
-            }
-            for order in await TradingBotManager.get_active_orders_list(bot_id)
-        ]
-        return active_orders_data
+        while True:
+            try:
+                ws_logger.debug(f"active_orders_service: bot_id = {bot_id}")
+                active_orders_data = [
+                    {
+                        "order_id": order.order_id,
+                        "order_type": order.order_type,
+                        "isInitial": order.isInitial,
+                        "price": order.price,
+                        "quantity": order.quantity,
+                        "created_at": order.created_at.isoformat()
+                    }
+                    for order in await TradingBotManager.get_active_orders_list(bot_id)
+                ]
+                
+                await manager.broadcast({
+                    "type": "active_orders_data", 
+                    "bot_id": bot_id,
+                    "payload": active_orders_data
+                })
+                
+                await asyncio.sleep(1)
+                
+            except Exception as e:
+                ws_logger.error(f"Ошибка при отправке active_orders_data: {e}")
+                await asyncio.sleep(5)
 
 
 async def order_history_service(bot_id: int):
     async with async_session() as session:
-        order_history_data = [
-            {
+        while True:
+            try:
+                ws_logger.debug(f"order_history_service: bot_id = {bot_id}")
+                order_history_data = [
+                    {
                 "order_id": order.order_id,
                 "order_type": order.order_type,
                 "price": order.price,
@@ -340,27 +410,52 @@ async def order_history_service(bot_id: int):
                 "updated_at": order.updated_at.isoformat()
             }
             for order in await TradingBotManager.get_order_history_list(bot_id)
-        ]
-        return order_history_data
+                ]
+                
+                await manager.broadcast({
+                    "type": "order_history_data", 
+                    "bot_id": bot_id,
+                    "payload": order_history_data
+                })
+                
+                await asyncio.sleep(1)
+                
+            except Exception as e:
+                ws_logger.error(f"Ошибка при отправке order_history_data: {e}")
+                await asyncio.sleep(5)
 
 async def trade_history_service(bot_id: int):
     async with async_session() as session:
-        trade_history_data = [
-            {
-                "buy_price": trade.buy_price,
-                "sell_price": trade.sell_price,
-                "quantity": trade.quantity,
-                "profit": trade.profit,
-                "profit_asset": trade.profit_asset,
-                "status": trade.status,
-                "trade_type": trade.trade_type,
-                "buy_order_id": trade.buy_order_id,
-                "sell_order_id": trade.sell_order_id,
-                "executed_at": trade.executed_at.isoformat()
-            }
-            for trade in await TradingBotManager.get_all_trades_list(bot_id)
-        ]
-        return trade_history_data
+        while True:
+            try:
+                ws_logger.debug(f"trade_history_service: bot_id = {bot_id}")
+                trade_history_data = [
+                    {
+                        "buy_price": trade.buy_price,
+                        "sell_price": trade.sell_price,
+                        "quantity": trade.quantity,
+                        "profit": trade.profit,
+                        "profit_asset": trade.profit_asset,
+                        "status": trade.status,
+                        "trade_type": trade.trade_type,
+                        "buy_order_id": trade.buy_order_id,
+                        "sell_order_id": trade.sell_order_id,
+                        "executed_at": trade.executed_at.isoformat()
+                    }
+                    for trade in await TradingBotManager.get_all_trades_list(bot_id)
+                ]
+                
+                await manager.broadcast({
+                    "type": "trade_history_data", 
+                    "bot_id": bot_id,
+                    "payload": trade_history_data
+                })
+                
+                await asyncio.sleep(1)
+                
+            except Exception as e:
+                ws_logger.error(f"Ошибка при отправке trade_history_data: {e}")
+                await asyncio.sleep(5)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

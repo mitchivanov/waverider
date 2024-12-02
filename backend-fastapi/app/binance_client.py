@@ -330,8 +330,18 @@ class BinanceClient:
             return None
 
 
-    async def get_account_balance_async(self):
-        """Get account balance asynchronously."""
-        account_info = await self.get_account_async()
-        return account_info['balances']
+    async def is_balance_sufficient(self, base_asset: str, quote_asset: str, base_asset_funds: float, quote_asset_funds: float):
+        """Check if the account balance is sufficient for the assigned funds."""
+        account_info = self.client.get_account()
+        balances = {balance['asset']: float(balance['free']) for balance in account_info['balances']}
+
+        # Check if there is enough balance for asset A (quote asset)
+        if balances.get(quote_asset, 0) < quote_asset_funds:
+            raise ValueError(f"Insufficient balance for {quote_asset}. Required: {quote_asset_funds}, Available: {balances.get(quote_asset, 0)}")
+
+        # Check if there is enough balance for asset B (base asset)
+        if balances.get(base_asset, 0) < base_asset_funds:
+            raise ValueError(f"Insufficient balance for {base_asset}. Required: {base_asset_funds}, Available: {balances.get(base_asset, 0)}")
+
+        logging.info(f"Sufficient balance for {quote_asset} and {base_asset}.")
  

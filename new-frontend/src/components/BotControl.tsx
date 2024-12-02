@@ -6,7 +6,8 @@ import { useWebSocket } from '../services/WebSocketMaster';
 
 const defaultGridParams: GridTradingParameters = {
   type: 'grid',
-  symbol: "BTCUSDT",
+  baseAsset: "BTC",
+  quoteAsset: "USDT",
   asset_a_funds: 5000,
   asset_b_funds: 0.05,
   grids: 10,
@@ -77,7 +78,11 @@ export const BotControl: React.FC<BotControlProps> = ({ botId, onBotStarted }) =
     if (isLoading) return;
     try {
       setIsLoading(true);
-      const response = await botService.start(params);
+      const paramsToSend = {
+        ...params,
+        symbol: `${(params as GridTradingParameters).baseAsset}${(params as GridTradingParameters).quoteAsset}`
+      };
+      const response = await botService.start(paramsToSend);
       alert('Bot started successfully');
       setIsBotRunning(true);
       onBotStarted(response.data.bot_id);

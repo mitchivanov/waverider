@@ -14,6 +14,12 @@ const WebSocketContext = createContext<WebSocketContextType | null>(null);
 const RECONNECT_INTERVAL = 3000;
 const MAX_RETRIES = 5;
 
+interface WebSocketMessage {
+  type: string;
+  bot_id: number;
+  payload: Record<string, any>;
+}
+
 export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -46,17 +52,17 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data);
-          const { bot_id, type } = data;
+          const data = JSON.parse(event.data) as WebSocketMessage;
+          console.debug('WebSocket message received:', data);
+          const { bot_id, type, payload } = data;
           
           if (bot_id && type) {
             const messageKey = `${bot_id}_${type}`;
             setLastMessage(prev => ({
               ...prev,
-              [messageKey]: data
+              [messageKey]: payload
             }));
           } else {
-            // Обработка сообщений без bot_id
             setLastMessage(prev => ({
               ...prev,
               global: data

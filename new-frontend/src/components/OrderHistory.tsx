@@ -18,9 +18,9 @@ export const OrderHistory: React.FC<OrderHistoryProps> = ({ botId }) => {
   }, [botId, subscribe, unsubscribe]);
 
   useEffect(() => {
-    const key = `${botId}_order_history_data`;
-    if (lastMessage[key] && lastMessage[key].payload) {
-      setOrders(lastMessage[key].payload);
+    const messageKey = `${botId}_order_history_data`;
+    if (lastMessage[messageKey]) {
+      setOrders(lastMessage[messageKey]);
     }
   }, [lastMessage, botId]);
 

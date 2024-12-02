@@ -15,7 +15,8 @@ export interface Bot {
 
 export interface GridTradingParameters extends BaseTradingParameters {
   type: 'grid';
-  symbol: string;
+  baseAsset: string;    // Например "BTC"
+  quoteAsset: string;
   asset_a_funds: number;
   asset_b_funds: number;
   grids: number;

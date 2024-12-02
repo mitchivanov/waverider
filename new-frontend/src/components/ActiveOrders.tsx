@@ -18,9 +18,9 @@ export const ActiveOrders: React.FC<ActiveOrdersProps> = ({ botId }) => {
   }, [botId, subscribe, unsubscribe]);
 
   useEffect(() => {
-    const key = `${botId}_active_orders_data`;
-    if (lastMessage[key] && lastMessage[key].payload) {
-      setOrders(lastMessage[key].payload);
+    const messageKey = `${botId}_active_orders_data`;
+    if (lastMessage[messageKey]) {
+      setOrders(lastMessage[messageKey]);
     }
   }, [lastMessage, botId]);
 

@@ -11,17 +11,26 @@ export const TradeHistory: React.FC<TradeHistoryProps> = ({ botId }) => {
   const [trades, setTrades] = useState<TradeHistoryType[]>([]);
   const [orderHistory, setOrderHistory] = useState<OrderHistory[]>([]);
   const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null);
-  const { lastMessage } = useWebSocket();
+  const { lastMessage, subscribe, unsubscribe } = useWebSocket();
+
+  useEffect(() => {
+    subscribe(botId, 'trade_history');
+    subscribe(botId, 'order_history');
+    return () => {
+      unsubscribe(botId, 'trade_history');
+      unsubscribe(botId, 'order_history');
+    };
+  }, [botId, subscribe, unsubscribe]);
 
   useEffect(() => {
     const tradeKey = `${botId}_trade_history_data`;
     const orderKey = `${botId}_order_history_data`;
     
-    if (lastMessage[tradeKey] && lastMessage[tradeKey].payload) {
-      setTrades(lastMessage[tradeKey].payload);
+    if (lastMessage[tradeKey]) {
+      setTrades(lastMessage[tradeKey]);
     }
-    if (lastMessage[orderKey] && lastMessage[orderKey].payload) {
-      setOrderHistory(lastMessage[orderKey].payload);
+    if (lastMessage[orderKey]) {
+      setOrderHistory(lastMessage[orderKey]);
     }
   }, [lastMessage, botId]);
 
