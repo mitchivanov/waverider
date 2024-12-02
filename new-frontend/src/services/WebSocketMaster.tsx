@@ -2,10 +2,11 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { botService } from '../services/api';
 
 interface WebSocketContextType {
-  lastMessage: any;
+  lastMessage: Record<string, any>;
   sendMessage: (message: any) => void;
   connected: boolean;
-  subscribe: (message: any) => void;
+  subscribe: (botId: number, type: string) => void;
+  unsubscribe: (botId: number, type: string) => void;
 }
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null);
@@ -16,11 +17,11 @@ const MAX_RETRIES = 5;
 export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
-  const [lastMessage, setLastMessage] = useState<any>(null);
+  const [lastMessage, setLastMessage] = useState<Record<string, any>>({});
   const reconnectCount = useRef(0);
   const reconnectTimeout = useRef<NodeJS.Timeout>();
   const pendingMessages = useRef<any[]>([]);
-  const subscriptions = useRef<any[]>([]);
+  const subscriptions = useRef<Map<number, Set<string>>>(new Map());
 
   const connect = useCallback(() => {
     try {
@@ -31,22 +32,36 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setConnected(true);
         reconnectCount.current = 0;
         
-        // Отправляем накопившиеся сообщения
-        while (pendingMessages.current.length > 0) {
-          const message = pendingMessages.current.shift();
-          if (message) ws.send(JSON.stringify(message));
-        }
-
-        // Отправляем подписочные сообщения
-        subscriptions.current.forEach(message => {
-          ws.send(JSON.stringify(message));
+        // Восстанавливаем все подписки
+        subscriptions.current.forEach((types, botId) => {
+          types.forEach(type => {
+            ws.send(JSON.stringify({
+              action: 'subscribe',
+              bot_id: botId,
+              type: type
+            }));
+          });
         });
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          setLastMessage(data);
+          const { bot_id, type } = data;
+          
+          if (bot_id && type) {
+            const messageKey = `${bot_id}_${type}`;
+            setLastMessage(prev => ({
+              ...prev,
+              [messageKey]: data
+            }));
+          } else {
+            // Обработка сообщений без bot_id
+            setLastMessage(prev => ({
+              ...prev,
+              global: data
+            }));
+          }
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
         }
@@ -101,13 +116,29 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [socket]);
 
-  const subscribe = useCallback((message: any) => {
-    subscriptions.current.push(message);
-    sendMessage(message);
-  }, [sendMessage]);
+  const subscribe = useCallback((botId: number, type: string) => {
+    if (!subscriptions.current.has(botId)) {
+      subscriptions.current.set(botId, new Set());
+    }
+    subscriptions.current.get(botId)?.add(type);
+    
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({
+        action: 'subscribe',
+        bot_id: botId,
+        type: type
+      }));
+    }
+  }, [socket]);
+
+  const unsubscribe = useCallback((botId: number, type: string) => {
+    if (subscriptions.current.has(botId)) {
+      subscriptions.current.get(botId)?.delete(type);
+    }
+  }, []);
 
   return (
-    <WebSocketContext.Provider value={{ lastMessage, sendMessage, connected, subscribe }}>
+    <WebSocketContext.Provider value={{ lastMessage, sendMessage, connected, subscribe, unsubscribe }}>
       {children}
     </WebSocketContext.Provider>
   );

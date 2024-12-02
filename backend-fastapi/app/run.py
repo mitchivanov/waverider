@@ -14,7 +14,7 @@ if __name__ == "__main__":
     "deviation_threshold": 0.004,
     "growth_factor": 0.5,
     "use_granular_distribution": true,
-    "trail_price": true,
+    "trail_price": true,    
     "only_profitable_trades": false
 }
 """

@@ -1,41 +1,33 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useWebSocket } from '../services/WebSocketMaster';
 import { TradeHistory as TradeHistoryType, OrderHistory } from '../types';
 import { TradeOrders } from './TradeOrders';
 
-export const TradeHistory: React.FC = () => {
+interface TradeHistoryProps {
+  botId: number;
+}
+
+export const TradeHistory: React.FC<TradeHistoryProps> = ({ botId }) => {
   const [trades, setTrades] = useState<TradeHistoryType[]>([]);
+  const [orderHistory, setOrderHistory] = useState<OrderHistory[]>([]);
   const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null);
-  const [allOrderHistory, setAllOrderHistory] = useState<OrderHistory[]>([]);
   const { lastMessage } = useWebSocket();
 
   useEffect(() => {
-    if (lastMessage?.type === 'all_trades_data') {
-      setTrades(prevTrades => {
-        const existingTradeIds = new Set(prevTrades.map(t => t.buy_order_id));
-        const uniqueNewTrades = (lastMessage.payload || []).filter(
-          (trade: TradeHistoryType) => !existingTradeIds.has(trade.buy_order_id)
-        );
-        if (uniqueNewTrades.length === 0) return prevTrades;
-        return [...prevTrades, ...uniqueNewTrades];
-      });
-    } else if (lastMessage?.type === 'order_history_data') {
-      setAllOrderHistory(prevOrders => {
-        const existingOrderIds = new Set(prevOrders.map(o => o.order_id));
-        const uniqueNewOrders = (lastMessage.payload || []).filter(
-          (order: OrderHistory) => !existingOrderIds.has(order.order_id)
-        );
-        if (uniqueNewOrders.length === 0) return prevOrders;
-        return [...prevOrders, ...uniqueNewOrders];
-      });
+    const tradeKey = `${botId}_trade_history_data`;
+    const orderKey = `${botId}_order_history_data`;
+    
+    if (lastMessage[tradeKey] && lastMessage[tradeKey].payload) {
+      setTrades(lastMessage[tradeKey].payload);
     }
-  }, [lastMessage]);
+    if (lastMessage[orderKey] && lastMessage[orderKey].payload) {
+      setOrderHistory(lastMessage[orderKey].payload);
+    }
+  }, [lastMessage, botId]);
 
-  const handleRowClick = useCallback((trade: TradeHistoryType) => {
-    setExpandedTradeId(prevId => 
-      prevId === trade.buy_order_id ? null : trade.buy_order_id
-    );
-  }, []);
+  const handleRowClick = (trade: TradeHistoryType) => {
+    setExpandedTradeId(expandedTradeId === trade.buy_order_id ? null : trade.buy_order_id);
+  };
 
   return (
     <div className="trade-history bg-gray-800 p-6 rounded-lg shadow-lg">
@@ -66,8 +58,8 @@ export const TradeHistory: React.FC = () => {
           <tbody>
             {trades.length > 0 ? (
               trades.map((trade) => {
-                const relatedOrders = allOrderHistory.filter(
-                  (order) =>
+                const relatedOrders = orderHistory.filter(
+                  (order: OrderHistory) =>
                     order.order_id === trade.buy_order_id ||
                     order.order_id === trade.sell_order_id
                 );

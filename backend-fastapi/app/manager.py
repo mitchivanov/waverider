@@ -140,3 +140,22 @@ class TradingBotManager:
                 logging.error(f"Бот с id {bot_id} не найден.")
                 raise HTTPException(status_code=404, detail=f"Бот с id {bot_id} не найден.")
             return bot
+        
+    @staticmethod
+    async def get_bot_status(bot_id: int) -> dict:
+        try:
+            # Получаем статус бота из базы данных или кэша
+            bot = await TradingBotManager.get_bot_by_id(bot_id)
+            return {
+                "status": bot.status,
+                "last_update": bot.last_update,
+                "error": bot.error if hasattr(bot, 'error') else None,
+                "current_price": bot.current_price if hasattr(bot, 'current_price') else None,
+                "profit": bot.total_profit if hasattr(bot, 'total_profit') else 0
+            }
+        except Exception as e:
+            logging.error(f"Error getting bot status: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }

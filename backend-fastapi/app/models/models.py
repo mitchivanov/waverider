@@ -54,7 +54,7 @@ class ActiveOrder(SQLModel, table=True):
     order_id: str = Field(primary_key=True)
     bot_id: int = Field(foreign_key="bots.id")
     order_type: str = Field(index=True)
-    is_initial: bool = Field(index=True)
+    isInitial: bool = Field(index=True)
     price: float
     quantity: float
     created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
@@ -99,7 +99,7 @@ class OrderHistory(SQLModel, table=True):
     bot_id: int = Field(foreign_key="bots.id")
     order_id: str = Field(index=True)
     order_type: str  # 'buy' или 'sell'
-    is_initial: bool = Field(index=True)
+    isInitial: bool = Field(index=True)
     price: float
     quantity: float
     status: str  # 'OPEN', 'CLOSED', 'CANCELLED' и т.д.

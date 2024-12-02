@@ -2,15 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { useWebSocket } from '../services/WebSocketMaster';
 import { BotStatus as BotStatusType } from '../types';
 
-export const BotStatus: React.FC = () => {
+interface BotStatusProps {
+  botId: number;
+}
+
+export const BotStatus: React.FC<BotStatusProps> = ({ botId }) => {
   const [status, setStatus] = useState<BotStatusType | null>(null);
   const { lastMessage } = useWebSocket();
 
   useEffect(() => {
-    if (lastMessage?.type === 'status_update') {
-      setStatus(lastMessage.data);
+    const statusKey = `${botId}_status_update`;
+    if (lastMessage[statusKey]) {
+      setStatus(lastMessage[statusKey].data);
     }
-  }, [lastMessage]);
+  }, [lastMessage, botId]);
 
   if (!status) return <div className="text-gray-300">Loading...</div>;
 
@@ -88,13 +93,6 @@ export const BotStatus: React.FC = () => {
           <span className="label block text-gray-400">Total Profit (USDT):</span>
           <span className={`value ${status.total_profit_usdt >= 0 ? 'text-green-400' : 'text-red-400'}`}>
             ${status.total_profit_usdt.toFixed(2)}
-          </span>
-        </div>
-
-        <div className="status-item bg-gray-700 p-4 rounded-md">
-          <span className="label block text-gray-400">Unrealized Profit (USDT):</span>
-          <span className={`value ${status.unrealized_profit_usdt >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            ${status.unrealized_profit_usdt.toFixed(2)}
           </span>
         </div>
       </div>

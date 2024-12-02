@@ -2,15 +2,27 @@ import React, { useState, useEffect } from 'react';
 import { useWebSocket } from '../services/WebSocketMaster';
 import { ActiveOrder } from '../types';
 
-export const ActiveOrders: React.FC = () => {
+interface ActiveOrdersProps {
+  botId: number;
+}
+
+export const ActiveOrders: React.FC<ActiveOrdersProps> = ({ botId }) => {
   const [orders, setOrders] = useState<ActiveOrder[]>([]);
-  const { lastMessage } = useWebSocket();
+  const { lastMessage, subscribe, unsubscribe } = useWebSocket();
 
   useEffect(() => {
-    if (lastMessage?.type === 'active_orders_data') {
-      setOrders(lastMessage.payload || []);
+    subscribe(botId, 'active_orders');
+    return () => {
+      unsubscribe(botId, 'active_orders');
+    };
+  }, [botId, subscribe, unsubscribe]);
+
+  useEffect(() => {
+    const key = `${botId}_active_orders_data`;
+    if (lastMessage[key] && lastMessage[key].payload) {
+      setOrders(lastMessage[key].payload);
     }
-  }, [lastMessage]);
+  }, [lastMessage, botId]);
 
   return (
     <div className="active-orders bg-gray-800 p-6 rounded-lg shadow-lg">

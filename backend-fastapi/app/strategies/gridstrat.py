@@ -342,8 +342,11 @@ class GridStrategy(BaseStrategy):
                 if order and 'orderId' in order:
                     order_id = order['orderId']
                     
+                    logging.info(f"Attempting to add order {order_id} with isInitial={isInitial} to history")
+                    
                     # Add to OrderHistory
                     await self.add_order_to_history(
+                        bot_id=self.bot_id,
                         order_id=str(order_id),
                         order_type=order_type.lower(),
                         isInitial=isInitial,
@@ -367,7 +370,7 @@ class GridStrategy(BaseStrategy):
                     }
 
                     # Add to database
-                    await self.add_active_order(order_data)
+                    await self.add_active_order(self.bot_id, order_data)
                     
                     # Add to memory list
                     self.active_orders.append({
@@ -484,7 +487,7 @@ class GridStrategy(BaseStrategy):
         
         
         try:
-            # Создаем одну сессию на все время работы стратегии
+            # Создаем одну сессию на все в��емя работы стратегии
             self.session = aiohttp.ClientSession()
             price_update_task = asyncio.create_task(self.update_price())
             
@@ -532,7 +535,7 @@ class GridStrategy(BaseStrategy):
                                     await self.trades_logger.log(f"Buy order {buy['order_id']} filled at price ${buy['price']}")
                                     
                                     # Update order status in history
-                                    await self.update_order_history(buy['order_id'], 'FILLED')
+                                    await self.update_order_history(self.bot_id, buy['order_id'], 'FILLED')
                                     
                                     # Delete buy position from tracking
                                     max_retries = 3
@@ -542,7 +545,7 @@ class GridStrategy(BaseStrategy):
                                             self.buy_positions = [pos for pos in self.buy_positions if pos['order_id'] != buy['order_id']]
                                             await self.trades_logger.log(f"Buy position {buy['order_id']} removed from tracking")
                                             
-                                            await self.remove_active_order(buy['order_id'])
+                                            await self.remove_active_order(self.bot_id, buy['order_id'])
                                             await self.trades_logger.log(f"Buy order {buy['order_id']} removed")
                                             
                                             break
@@ -584,6 +587,7 @@ class GridStrategy(BaseStrategy):
                                             
                                             # Write to trade history using data from Binance response
                                             await self.add_trade_to_history(
+                                                bot_id=self.bot_id,
                                                 buy_price=buy['price'],
                                                 sell_price=float(sell_order['price']),  # Use price from response
                                                 quantity=float(sell_order['origQty']),  # Use quantity from response
@@ -626,7 +630,7 @@ class GridStrategy(BaseStrategy):
                                     await self.trades_logger.log(f"Sell order {sell['order_id']} filled at price ${sell['price']}")
                                     
                                     # Update order status in history
-                                    await self.update_order_history(sell['order_id'], 'FILLED')
+                                    await self.update_order_history(self.bot_id, sell['order_id'], 'FILLED')
                                     
                                     # Delete sell position from tracking
                                     max_retries = 3
@@ -636,7 +640,7 @@ class GridStrategy(BaseStrategy):
                                             self.sell_positions = [pos for pos in self.sell_positions if pos['order_id'] != sell['order_id']]
                                             await self.trades_logger.log(f"Sell position {sell['order_id']} removed from tracking")
                                             
-                                            await self.remove_active_order(sell['order_id'])
+                                            await self.remove_active_order(self.bot_id, sell['order_id'])
                                             await self.trades_logger.log(f"Sell order {sell['order_id']} removed")
                                             
                                             break
@@ -676,6 +680,7 @@ class GridStrategy(BaseStrategy):
                                             
                                             # Write to trade history using data from Binance response
                                             await self.add_trade_to_history(
+                                                bot_id=self.bot_id,
                                                 buy_price=float(buy_order['price']),
                                                 sell_price=sell['price'],
                                                 quantity=float(buy_order['origQty']),
@@ -773,7 +778,7 @@ class GridStrategy(BaseStrategy):
                             for order_id in initial_order_ids:
                                 try:
                                     # 1. Update order status in history
-                                    await self.update_order_history(order_id, 'CANCELED')
+                                    await self.update_order_history(self.bot_id, order_id, 'CANCELED')
                                     
                                     # 2. Remove from buy_positions
                                     self.buy_positions = [
@@ -908,10 +913,10 @@ class GridStrategy(BaseStrategy):
                         await self.trades_logger.log("Sell order is filled, processing sell order")
                         
                         # Update order status in history
-                        await self.update_order_history(sell_order.get('order_id'), 'FILLED')
+                        await self.update_order_history(self.bot_id, sell_order.get('order_id'), 'FILLED')
                         
                         # Remove the completed buy order from active orders
-                        await self.remove_active_order(sell_order.get('order_id'))
+                        await self.remove_active_order(self.bot_id, sell_order.get('order_id'))
                         
                         # Calculate profit in USDT for buy-sell sequence
                         buy_price = trade['buy_order']['price']
@@ -928,6 +933,7 @@ class GridStrategy(BaseStrategy):
                         
                         # Update trade history with completed trade
                         await self.update_trade_in_history(
+                            bot_id=self.bot_id,
                             buy_price=buy_price,
                             sell_price=sell_price,
                             quantity=quantity,
@@ -951,10 +957,10 @@ class GridStrategy(BaseStrategy):
                         await self.trades_logger.log("Buy order is filled, processing buy order")
                         
                         # Update order status in history
-                        await self.update_order_history(buy_order.get('order_id'), 'FILLED')
+                        await self.update_order_history(self.bot_id, buy_order.get('order_id'), 'FILLED')
                         
                         # Remove the completed sell order from active orders
-                        await self.remove_active_order(buy_order.get('order_id'))
+                        await self.remove_active_order(self.bot_id, buy_order.get('order_id'))
                         
                         # Calculate profit in base asset for sell-buy sequence
                         sell_price = trade['sell_order']['price']
@@ -971,6 +977,7 @@ class GridStrategy(BaseStrategy):
                         
                         # Update trade history with completed trade
                         await self.update_trade_in_history(
+                            bot_id=self.bot_id,
                             buy_price=buy_price,
                             sell_price=sell_price,
                             quantity=quantity,
@@ -1042,6 +1049,7 @@ class GridStrategy(BaseStrategy):
             logging.info(f"Попытка добавить сделку в историю: buy_price={buy_price}, sell_price={sell_price}, quantity={quantity}")
             
             trade_data = {
+                'bot_id': bot_id,
                 'buy_price': buy_price,
                 'sell_price': sell_price,
                 'quantity': quantity,
@@ -1365,12 +1373,15 @@ class GridStrategy(BaseStrategy):
         
             # Очищаем таблицу активных ордеров в базе данных
             async with async_session() as session:
-                await session.execute(delete(ActiveOrder))
+                await session.execute(delete(ActiveOrder).where(ActiveOrder.bot_id == self.bot_id))
                 await session.commit()
             
             # Закрываем все сессии
             await self.close_all_sessions()
-        
+            
+            await self.binance_client.cancel_all_orders_async(self.symbol)
+            
+            # Закрываем логгер
             await self.trades_logger.close()
         
             logging.info("Стратегия успешно остановлена")

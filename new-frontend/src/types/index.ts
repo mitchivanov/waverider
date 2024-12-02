@@ -5,6 +5,14 @@ export interface BaseTradingParameters {
   testnet: boolean;
 }
 
+export interface Bot {
+  id: number;
+  type: string;
+  symbol: string;
+  status: string;
+  uptime: number;
+}
+
 export interface GridTradingParameters extends BaseTradingParameters {
   type: 'grid';
   symbol: string;

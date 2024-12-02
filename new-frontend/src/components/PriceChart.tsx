@@ -14,17 +14,23 @@ import { ActiveOrder } from '../types';
 import { useWebSocket } from '../services/WebSocketMaster';
 
 const intervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
-const symbol = 'BTCUSDT';
+const symbol = 'BTCUSDT'; // Или получайте динамически
 
-export const PriceChart: React.FC = () => {
+interface PriceChartProps {
+  botId: number;
+}
+
+export const PriceChart: React.FC<PriceChartProps> = ({ botId }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const [activeOrders, setActiveOrders] = useState<ActiveOrder[]>([]);
   const [selectedInterval, setSelectedInterval] = useState<string>('1m');
+  const { lastMessage, sendMessage } = useWebSocket();
+
+  // Ref для хранения ссылок на ценовые линии
   const priceLinesRef = useRef<IPriceLine[]>([]);
-  
-  const { subscribe, lastMessage } = useWebSocket();
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     if (chartContainerRef.current) {
@@ -86,25 +92,17 @@ export const PriceChart: React.FC = () => {
     }
   }, []);
 
-  // Подписка на данные при монтировании и смене интервала
   useEffect(() => {
-    subscribe({
-      type: "subscribe",
-      symbol: symbol,
-      interval: selectedInterval
-    });
-  }, [symbol, selectedInterval, subscribe]);
+    const historicalKey = `${botId}_historical_kline_data`;
+    const candleKey = `${botId}_kline_data`;
+    const ordersKey = `${botId}_active_orders_data`;
+    const candleUpdateKey = `${botId}_candlestick_update`;
 
-  // Обработка входящих сообщений
-  useEffect(() => {
-    if (!lastMessage) return;
-
-    const { type, data, payload } = lastMessage;
-
-    if (type === "historical_kline_data") {
-      const historicalData: CandlestickData[] = data
+    // Обработка исторических данных
+    if (lastMessage[historicalKey]) {
+      const historicalData: CandlestickData[] = lastMessage[historicalKey].data
         .map((k: any) => ({
-          time: k.open_time / 1000,
+          time: k.time as Time,
           open: k.open,
           high: k.high,
           low: k.low,
@@ -112,46 +110,56 @@ export const PriceChart: React.FC = () => {
         }))
         .sort((a: CandlestickData, b: CandlestickData) => 
           Number(a.time) - Number(b.time)
-        )
-        .slice(-100);
+        );
       
       candlestickSeriesRef.current?.setData(historicalData);
     }
 
-    if (type === "active_orders_data") {
-      const orders = payload || [];
+    // Обработка обновлений свечей
+    if (lastMessage[candleKey]) {
+      const candleData = lastMessage[candleKey].data;
+      const kline: CandlestickData = {
+        time: candleData.time as Time,
+        open: candleData.open,
+        high: candleData.high,
+        low: candleData.low,
+        close: candleData.close,
+      };
+      candlestickSeriesRef.current?.update(kline);
+    }
+
+    // Обработка обновлений свечей реального времени
+    if (lastMessage[candleUpdateKey]) {
+      const candleData = lastMessage[candleUpdateKey].data;
+      const kline: CandlestickData = {
+        time: candleData.time as Time,
+        open: candleData.open,
+        high: candleData.high,
+        low: candleData.low,
+        close: candleData.close,
+      };
+      candlestickSeriesRef.current?.update(kline);
+    }
+
+    // Обработка активных ордеров
+    if (lastMessage[ordersKey] && lastMessage[ordersKey].payload) {
+      const orders = lastMessage[ordersKey].payload;
       setActiveOrders(orders);
       updateGridLevels(orders);
     }
-
-    if (type === "kline_data" || type === "candlestick_update") {
-      const kline: CandlestickData = {
-        time: (type === "kline_data" ? data.open_time : data.time) / 1000 as Time,
-        open: data.open,
-        high: data.high,
-        low: data.low,
-        close: data.close,
-      };
-      
-      try {
-        candlestickSeriesRef.current?.update(kline);
-      } catch (error) {
-        console.warn('Ошибка при обновлении данных свечи:', error);
-      }
-    }
-  }, [lastMessage]);
+  }, [lastMessage, botId]);
 
   const updateGridLevels = (orders: ActiveOrder[]) => {
     if (!candlestickSeriesRef.current) return;
 
-    // Remove existing price lines
+    // Удаляем существующие ценовые линии
     priceLinesRef.current.forEach((line) => {
       candlestickSeriesRef.current?.removePriceLine(line);
     });
-    // Clear the array
+    // Очищаем массив ценовых линий
     priceLinesRef.current = [];
 
-    // Add new price lines based on active orders
+    // Добавляем новые уровни сетки на основе активных ордеров
     orders.forEach((order) => {
       const priceLineOptions: PriceLineOptions = {
         price: order.price,
@@ -173,31 +181,44 @@ export const PriceChart: React.FC = () => {
 
   const handleIntervalChange = (interval: string) => {
     setSelectedInterval(interval);
-    subscribe({
+    // Используем общий WebSocket
+    const message = {
       type: "change_interval",
-      interval: interval
-    });
+      botId: botId, // Добавляем botId
+      interval: interval,
+      symbol: symbol
+    };
+    // Используем sendMessage из WebSocket контекста
+    sendMessage(message);
   };
-
   return (
-    <div className="price-chart-container w-full bg-gray-800 p-6 rounded-lg shadow-lg">
-      <div className="mb-4">
-        <div className="interval-buttons flex flex-wrap gap-2">
-          {intervals.map((interval) => (
-            <button
-              key={interval}
-              onClick={() => handleIntervalChange(interval)}
-              className={`px-3 py-1 rounded-md text-white ${selectedInterval === interval ? 'bg-green-500' : 'bg-red-500 hover:bg-red-600'}`}
-            >
-              {interval}
-            </button>
-          ))}
-        </div>
+    <div>
+      <div className="interval-buttons" style={{ marginBottom: '10px' }}>
+        {intervals.map((interval) => (
+          <button
+            key={interval}
+            onClick={() => handleIntervalChange(interval)}
+            style={{
+              marginRight: '5px',
+              padding: '5px 10px',
+              backgroundColor: selectedInterval === interval ? '#4caf50' : '#f44336',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+            }}
+          >
+            {interval}
+          </button>
+        ))}
       </div>
-      <div className="price-chart-area h-96">
+      <div className="price-chart-container" style={{ height: '500px' }}>
         <div
           ref={chartContainerRef}
-          className="w-full h-full"
+          style={{
+            width: '100%',
+            height: '100%',
+          }}
         />
       </div>
     </div>

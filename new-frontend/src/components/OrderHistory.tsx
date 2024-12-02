@@ -2,22 +2,27 @@ import React, { useState, useEffect } from 'react';
 import { useWebSocket } from '../services/WebSocketMaster';
 import { OrderHistory as OrderHistoryType } from '../types';
 
-export const OrderHistory: React.FC = () => {
+interface OrderHistoryProps {
+  botId: number;
+}
+
+export const OrderHistory: React.FC<OrderHistoryProps> = ({ botId }) => {
   const [orders, setOrders] = useState<OrderHistoryType[]>([]);
-  const { lastMessage } = useWebSocket();
+  const { lastMessage, subscribe, unsubscribe } = useWebSocket();
 
   useEffect(() => {
-    if (lastMessage?.type === 'order_history_data') {
-      setOrders(prevOrders => {
-        const existingOrderIds = new Set(prevOrders.map(o => o.order_id));
-        const uniqueNewOrders = (lastMessage.payload || []).filter(
-          (order: OrderHistoryType) => !existingOrderIds.has(order.order_id)
-        );
-        if (uniqueNewOrders.length === 0) return prevOrders;
-        return [...prevOrders, ...uniqueNewOrders];
-      });
+    subscribe(botId, 'order_history');
+    return () => {
+      unsubscribe(botId, 'order_history');
+    };
+  }, [botId, subscribe, unsubscribe]);
+
+  useEffect(() => {
+    const key = `${botId}_order_history_data`;
+    if (lastMessage[key] && lastMessage[key].payload) {
+      setOrders(lastMessage[key].payload);
     }
-  }, [lastMessage]);
+  }, [lastMessage, botId]);
 
   return (
     <div className="order-history bg-gray-800 p-6 rounded-lg shadow-lg">

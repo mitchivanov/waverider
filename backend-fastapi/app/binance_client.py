@@ -329,4 +329,9 @@ class BinanceClient:
             logging.error(f"Error getting order status: {str(e)}")
             return None
 
+
+    async def get_account_balance_async(self):
+        """Get account balance asynchronously."""
+        account_info = await self.get_account_async()
+        return account_info['balances']
  

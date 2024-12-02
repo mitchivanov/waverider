@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { botService } from '../services/api';
 import { GridTradingParameters, AnotherTradingParameters } from '../types';
 import { GridBotForm } from './GridBotForm';
+import { useWebSocket } from '../services/WebSocketMaster';
 
 const defaultGridParams: GridTradingParameters = {
   type: 'grid',
@@ -14,8 +15,8 @@ const defaultGridParams: GridTradingParameters = {
   use_granular_distribution: true,
   trail_price: true,
   only_profitable_trades: false,
-  api_key: '',
-  api_secret: '',
+  api_key: '55euYhdLmx17qhTB1KhBSbrsS3A79bYU0C408VHMYsTTMcsyfSMboJ1d1uEWNLq3',
+  api_secret: '2zlWvVVQIrj5ZryMNCkt9KIqowlQQMdG0bcV4g4LAinOnF8lc7O3Udumn6rIAyLb',
   testnet: true
 };
 
@@ -28,11 +29,33 @@ const defaultAnotherParams: AnotherTradingParameters = {
   testnet: true
 };
 
-export const BotControl: React.FC = () => {
+interface BotControlProps {
+  botId: number;
+  onBotStarted: (newBotId: number) => void;
+}
+
+export const BotControl: React.FC<BotControlProps> = ({ botId, onBotStarted }) => {
   const [botType, setBotType] = useState<'grid' | 'another'>('grid');
   const [params, setParams] = useState<GridTradingParameters | AnotherTradingParameters>(defaultGridParams);
   const [isLoading, setIsLoading] = useState(false);
   const [isBotRunning, setIsBotRunning] = useState(false);
+  const { lastMessage, subscribe, unsubscribe } = useWebSocket();
+
+  useEffect(() => {
+    if (botId > 0) {
+      subscribe(botId, 'bot_status');
+      return () => {
+        unsubscribe(botId, 'bot_status');
+      };
+    }
+  }, [botId, subscribe, unsubscribe]);
+
+  useEffect(() => {
+    const key = `${botId}_bot_status`;
+    if (lastMessage[key]) {
+      setIsBotRunning(lastMessage[key].data.status === 'active');
+    }
+  }, [lastMessage, botId]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target as HTMLInputElement;
@@ -51,11 +74,13 @@ export const BotControl: React.FC = () => {
   };
 
   const handleStart = async () => {
+    if (isLoading) return;
     try {
       setIsLoading(true);
-      await botService.start(params);
+      const response = await botService.start(params);
       alert('Bot started successfully');
       setIsBotRunning(true);
+      onBotStarted(response.data.bot_id);
     } catch (error) {
       alert('Error starting the bot');
     } finally {
@@ -66,7 +91,7 @@ export const BotControl: React.FC = () => {
   const handleStop = async () => {
     try {
       setIsLoading(true);
-      await botService.stop();
+      await botService.stop(botId);
       alert('Bot stopped successfully');
       setIsBotRunning(false);
     } catch (error) {

@@ -2,6 +2,7 @@ import os
 from binance.client import Client
 from binance.enums import SIDE_BUY, SIDE_SELL
 
+
 # Set your API key and secret
 api_key = '55euYhdLmx17qhTB1KhBSbrsS3A79bYU0C408VHMYsTTMcsyfSMboJ1d1uEWNLq3'
 api_secret = '2zlWvVVQIrj5ZryMNCkt9KIqowlQQMdG0bcV4g4LAinOnF8lc7O3Udumn6rIAyLb'
