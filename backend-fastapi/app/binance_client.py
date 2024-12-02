@@ -344,4 +344,12 @@ class BinanceClient:
             raise ValueError(f"Insufficient balance for {base_asset}. Required: {base_asset_funds}, Available: {balances.get(base_asset, 0)}")
 
         logging.info(f"Sufficient balance for {quote_asset} and {base_asset}.")
+
+    async def get_account_balances(self):
+        try:
+            account_info = await self.get_account_async()
+            return account_info['balances']
+        except Exception as e:
+            logging.error(f"Ошибка при получении балансов: {e}")
+            raise Exception(f"Не удалось получить балансы: {str(e)}")
  

@@ -487,7 +487,7 @@ class GridStrategy(BaseStrategy):
         
         
         try:
-            # Создаем одну сессию на все в��емя работы стратегии
+            # Создаем одну сессию на все время работы стратегии
             self.session = aiohttp.ClientSession()
             price_update_task = asyncio.create_task(self.update_price())
             
@@ -1315,49 +1315,74 @@ class GridStrategy(BaseStrategy):
 
 # ENDPOINTS
 
-    async def get_strategy_status(self):
-        """Получает текущий статус стратегии."""
-        current_time = datetime.datetime.now()
-        running_time = current_time - self.start_time if hasattr(self, 'start_time') else None
-        total_profit_usdt = self.get_total_profit_usdt()
-        unrealized_profit = self.calculate_unrealized_profit_loss()
-        async with async_session() as session:
-            result = await session.execute(select(ActiveOrder))
-            active_orders = result.scalars().all()
-            active_orders_count = len(active_orders)
-        return {
-            "status": "active" if not self.stop_flag else "inactive",
-            "current_price": self.current_price,
-            "initial_price": self.initial_price,
-            "deviation": self.deviation,
-            "realized_profit_a": self.realized_profit_a,
-            "realized_profit_b": self.realized_profit_b,
-            "total_profit_usdt": total_profit_usdt,
-            "running_time": str(running_time) if running_time else None,
-            "active_orders_count": active_orders_count,
-            "completed_trades_count": len([t for t in self.trade_history if t['status'] == 'CLOSED']),
-            "unrealized_profit": unrealized_profit,
-            "active_orders": [
+    async def get_strategy_status(self, bot_id: int):
+        """Получает текущий статус стратегии для конкретного бота."""
+        try:
+            current_time = datetime.datetime.now()
+            running_time = current_time - self.start_time if hasattr(self, 'start_time') else None
+            total_profit_usdt = self.get_total_profit_usdt()
+            unrealized_profit = self.calculate_unrealized_profit_loss()
+            
+            # Получаем активные ордера для конкретного бота
+            async with async_session() as session:
+                result = await session.execute(
+                    select(ActiveOrder).where(ActiveOrder.bot_id == bot_id)
+                )
+                active_orders = result.scalars().all()
+                active_orders_count = len(active_orders)
+                
+                # Получаем завершенные сделки для конкретного бота
+                completed_trades_result = await session.execute(
+                    select(TradeHistory).where(
+                        TradeHistory.bot_id == bot_id,
+                        TradeHistory.status == 'CLOSED'
+                    )
+                )
+                completed_trades = completed_trades_result.scalars().all()
+                completed_trades_count = len(completed_trades)
+                
+            # Получаем активные ордера из памяти только для этого бота
+            bot_active_orders = [
                 {
                     "order_id": order["order_id"],
                     "order_type": order["order_type"],
                     "price": order["price"],
                     "quantity": order["quantity"],
                     "created_at": order["created_at"]
-                } for order in self.active_orders
-            ],
-            "initial_parameters": {
-                "symbol": self.symbol,
-                "asset_a_funds": self.asset_a_funds,
-                "asset_b_funds": self.asset_b_funds,
-                "grids": self.grids,
-                "deviation_threshold": self.deviation_threshold,
-                "growth_factor": self.growth_factor,
-                "use_granular_distribution": self.use_granular_distribution,
-                "trail_price": self.trail_price,
-                "only_profitable_trades": self.only_profitable_trades
+                } 
+                for order in self.active_orders 
+                if order.get("bot_id") == bot_id
+            ]
+
+            return {
+                "bot_id": bot_id,
+                "status": "active" if not self.stop_flag else "inactive",
+                "current_price": self.current_price,
+                "initial_price": self.initial_price,
+                "deviation": self.deviation,
+                "realized_profit_a": self.realized_profit_a,
+                "realized_profit_b": self.realized_profit_b,
+                "total_profit_usdt": total_profit_usdt,
+                "running_time": str(running_time) if running_time else None,
+                "active_orders_count": active_orders_count,
+                "completed_trades_count": completed_trades_count,
+                "unrealized_profit": unrealized_profit,
+                "active_orders": bot_active_orders,
+                "initial_parameters": {
+                    "symbol": self.symbol,
+                    "asset_a_funds": self.asset_a_funds,
+                    "asset_b_funds": self.asset_b_funds,
+                    "grids": self.grids,
+                    "deviation_threshold": self.deviation_threshold,
+                    "growth_factor": self.growth_factor,
+                    "use_granular_distribution": self.use_granular_distribution,
+                    "trail_price": self.trail_price,
+                    "only_profitable_trades": self.only_profitable_trades
+                }
             }
-        }
+        except Exception as e:
+            logging.error(f"Error getting strategy status: {e}")
+            raise
 
     async def stop_strategy(self):
         """Останалвает стратегию и очищает все ресурсы."""

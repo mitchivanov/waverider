@@ -49,6 +49,8 @@ export const GridBotForm: React.FC<GridBotFormProps> = ({ params, handleInputCha
           name="baseAsset"
           placeholder="Choose base asset"
           disabled={isBotRunning}
+          apiKey={params.api_key}
+          apiSecret={params.api_secret}
         />
       </div>
 
@@ -61,6 +63,8 @@ export const GridBotForm: React.FC<GridBotFormProps> = ({ params, handleInputCha
           name="quoteAsset"
           placeholder="Choose quote asset"
           disabled={isBotRunning}
+          apiKey={params.api_key}
+          apiSecret={params.api_secret}
         />
       </div>
 

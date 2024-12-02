@@ -81,10 +81,10 @@ class TradingBotManager:
             return False
 
     @classmethod
-    async def get_current_parameters(cls, bot_id: int) -> Optional[dict]:
+    async def get_current_parameters(cls, bot_id):
         if await cls.is_running(bot_id):
             strategy = cls._bots[bot_id]
-            parameters = await strategy.get_strategy_status()
+            parameters = await strategy.get_strategy_status(bot_id)
             
             return {
                 "status": parameters["status"],

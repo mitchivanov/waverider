@@ -457,6 +457,35 @@ async def trade_history_service(bot_id: int):
                 ws_logger.error(f"Ошибка при отправке trade_history_data: {e}")
                 await asyncio.sleep(5)
 
+@app.post("/api/balance")
+async def get_balance(params: dict):
+    try:
+        binance_client = BinanceClient(
+            api_key=params['api_key'], 
+            api_secret=params['api_secret'], 
+            testnet=params.get('testnet', True)
+        )
+        
+        # Получаем балансы с Binance
+        balances = await binance_client.get_account_balances()
+        
+        # Фильтруем балансы, оставляя только те, где есть средства
+        filtered_balances = [
+            {
+                'asset': balance['asset'],
+                'free': balance['free'],
+                'locked': balance['locked']
+            }
+            for balance in balances
+            if float(balance['free']) > 0 or float(balance['locked']) > 0
+        ]
+        
+        return {"balances": filtered_balances}
+        
+    except Exception as e:
+        logging.error(f"Ошибка при получении балансов: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
 
