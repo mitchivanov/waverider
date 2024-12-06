@@ -19,6 +19,8 @@ from sqlalchemy import update
 import aiofiles
 from strategies.base_strategy import BaseStrategy
 
+from notifications import NotificationManager
+
 # Configure logging for the entire application
 logging.basicConfig(
     level=logging.DEBUG,  # Set the default logging level to INFO
@@ -30,13 +32,14 @@ logging.basicConfig(
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 class AsyncLogger:
-    def __init__(self, filename, max_queue_size=1000):
-        self.filename = filename
+    def __init__(self, bot_id, max_queue_size=1000):
+        # Создаем путь для логов конкретного бота
+        self.filename = f'logs/bot_{bot_id}/trades.log'
         self.queue = asyncio.Queue(maxsize=max_queue_size)
         self.running = True
         
-        # Create logs directory if it doesn't exist
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        # Создаем директорию для логов конкретного бота
+        os.makedirs(os.path.dirname(self.filename), exist_ok=True)
         
         # Start the logging process
         asyncio.create_task(self._process_logs())
@@ -157,7 +160,8 @@ class GridStrategy(BaseStrategy):
         # После существующих инициализаций
         self.start_time = datetime.datetime.now()
         
-        self.trades_logger = AsyncLogger('logs/trades.log')
+        # Инициализируем логгер с ID бота
+        self.trades_logger = AsyncLogger(bot_id)
         
         # Инициализируем текущую цену
         asyncio.create_task(self.update_current_price())
@@ -610,6 +614,22 @@ class GridStrategy(BaseStrategy):
                                                 'trade_type': 'BUY_SELL'
                                             })
                                             await self.trades_logger.log(f"Successfully placed corresponding sell order at price ${sell_price}")
+                                            
+                                            
+                                            notification_data = {
+                                                "notification_type": "new_trade",
+                                                "bot_id": self.bot_id,
+                                                "payload": {
+                                                    "trade_type": 'BUY_SELL',
+                                                    "buy_price": buy['price'],
+                                                    "sell_price": sell_price,
+                                                    "quantity": buy['quantity'],
+                                                    "symbol": self.symbol
+                                                }
+                                            }   
+                                            
+                                            await NotificationManager.send_notification("new_trade", self.bot_id, notification_data)
+                                            
                                         except Exception as e:
                                             await self.trades_logger.log(f"Error processing trade data: {e}")
                                     else:
@@ -702,6 +722,21 @@ class GridStrategy(BaseStrategy):
                                                 },
                                                 'trade_type': 'SELL_BUY'
                                             })
+                                            
+                                            notification_data = {
+                                                "notification_type": "new_trade",
+                                                "bot_id": self.bot_id,
+                                                "payload": {
+                                                    "trade_type": 'SELL_BUY',
+                                                    "buy_price": float(buy_order['price']),
+                                                    "sell_price": sell['price'],
+                                                    "quantity": float(buy_order['origQty']),
+                                                    "symbol": self.symbol
+                                                }
+                                            }
+                                            
+                                            await NotificationManager.send_notification("new_trade", self.bot_id, notification_data)
+                                            
                                             await self.trades_logger.log(f"Successfully placed corresponding buy order at price ${buy_price}")
                                         except Exception as e:
                                             await self.trades_logger.log(f"Error processing trade data: {e}")

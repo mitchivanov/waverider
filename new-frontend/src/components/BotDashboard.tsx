@@ -5,13 +5,15 @@ import { TradeHistory } from './TradeHistory';
 import { ActiveOrders } from './ActiveOrders';
 import { OrderHistory } from './OrderHistory';
 import { PriceChart } from './PriceChart';
+import { useNotifications } from '../contexts/NotificationContext';
 
 interface BotDashboardProps {
     botId: number;
 }
 
 export const BotDashboard: React.FC<BotDashboardProps> = ({ botId }) => {
-    const { subscribe, unsubscribe } = useWebSocket();
+    const { subscribe, unsubscribe, lastMessage } = useWebSocket();
+    const { addNotification } = useNotifications();
 
     useEffect(() => {
         // Подписываемся на все необходимые типы данных
@@ -22,7 +24,8 @@ export const BotDashboard: React.FC<BotDashboardProps> = ({ botId }) => {
             'order_history',
             'price_data',
             'candlestick_data',
-            'candlestick_1m'
+            'candlestick_1m',
+            'notification'
         ];
 
         subscriptions.forEach(type => subscribe(botId, type));
@@ -31,6 +34,22 @@ export const BotDashboard: React.FC<BotDashboardProps> = ({ botId }) => {
             subscriptions.forEach(type => unsubscribe(botId, type));
         };
     }, [botId, subscribe, unsubscribe]);
+
+    useEffect(() => {
+        if (lastMessage[`${botId}_notification`]) {
+            const notification = lastMessage[`${botId}_notification`];
+            if (notification.notification_type === 'new_trade') {
+                const { trade_type, buy_price, sell_price, quantity, symbol } = notification.payload;
+                addNotification('new_trade', 'New Trade Executed', {
+                    type: trade_type === 'BUY_SELL' ? 'Long' : 'Short',
+                    symbol: symbol,
+                    buyPrice: `$${buy_price.toFixed(2)}`,
+                    sellPrice: `$${sell_price.toFixed(2)}`,
+                    quantity: quantity.toFixed(8)
+                });
+            }
+        }
+    }, [lastMessage, botId, addNotification]);
 
     return (
         <div className="dashboard-grid grid grid-cols-1 lg:grid-cols-2 gap-6">

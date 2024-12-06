@@ -98,3 +98,32 @@ export interface BotStatus {
   running_time: string | null;
   initial_parameters: TradingParameters;
 }
+
+export interface Notification {
+  id: string;
+  type: 'trade' | 'error' | 'info' | 'new_trade';
+  message: string;
+  details?: Record<string, any>;
+  timestamp: Date;
+  payload?: {
+    trade_type: 'BUY_SELL' | 'SELL_BUY';
+    buy_price: number;
+    sell_price: number;
+    quantity: number;
+    symbol: string;
+  };
+}
+
+export interface WebSocketNotification {
+  bot_id: number;
+  notification_type: string;
+  type: 'notification';
+  payload: {
+    notification_type: string;
+    trade_type: string;
+    buy_price: number;
+    sell_price: number;
+    quantity: number;
+    symbol: string;
+  };
+}

@@ -7,7 +7,6 @@ from database import async_session, init_db
 from binance_client import BinanceClient
 from fastapi import FastAPI, APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from strategies.gridstrat import GridStrategy
 #from strategies.otherstrat import OtherStrategy  # Импорт других стратегий
 from kline_manager import KlineManager
 from manager import TradingBotManager
@@ -24,6 +23,7 @@ from starlette.websockets import WebSocketState
 from typing import Dict, List, Set, Optional, Callable, Union
 import signal
 import sys
+from notifications import NotificationManager
 
 # Отключаем ненужные логи
 logging.getLogger('websockets').setLevel(logging.ERROR)
@@ -71,6 +71,7 @@ async def is_task_running(bot_id: int, task_type: str) -> bool:
 @app.on_event("startup")
 async def startup_event():
     await init_db()
+    NotificationManager.initialize(manager.broadcast)
 
 @app.post("/api/bot/start")
 async def start_bot(params: dict):
@@ -129,8 +130,10 @@ class ConnectionManager:
         self.active_connections: List[WebSocket] = []
 
     async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
+        if websocket.client_state != WebSocketState.CONNECTED:
+            await websocket.accept()
+        if websocket not in self.active_connections:
+            self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
@@ -151,11 +154,11 @@ manager = ConnectionManager()
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
-    ws_logger.info(f"WebSocket подключен: {websocket.client}")
-    connection_id = id(websocket)
-
     try:
+        connection_id = id(websocket)
+        await manager.connect(websocket)
+        ws_logger.info(f"WebSocket подключен: {websocket.client}")
+        
         while True:
             if websocket.client_state == WebSocketState.DISCONNECTED:
                 break
@@ -198,17 +201,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
             except WebSocketDisconnect:
                 ws_logger.info(f"WebSocket отключен: {websocket.client}")
-                await asyncio.sleep(5)
-                try:
-                    await manager.connect(websocket)
-                    ws_logger.info(f"WebSocket переподключен: {websocket.client}")
-                except Exception as reconnect_error:
-                    ws_logger.error(f"Ошибка при переподключении: {reconnect_error}")
-                continue
+                manager.disconnect(websocket)
+                break  # Удаляем попытку переподключения здесь
+
             except Exception as e:
                 ws_logger.error(f"Ошибка обработки сообщения: {e}")
                 await asyncio.sleep(0.1)
-                continue
 
     finally:
         # Отменяем все задачи при отключении
@@ -265,7 +263,7 @@ async def shutdown_event():
     await shutdown_bots()
 
 async def clear_database(bot_id: int):
-    """Очищает таблицы в базе данных для конкретного бота или все таблицы."""
+    """Очищает таблицы в базе данных для конкретного бота или вcе таблицы."""
     async with async_session() as session:
         try:
             if bot_id is not None:
@@ -485,6 +483,26 @@ async def get_balance(params: dict):
     except Exception as e:
         logging.error(f"Ошибка при получении балансов: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+async def attempt_reconnect(websocket, max_retries=3, initial_delay=1):
+    """Попытка переподключения с экспоненциальной задержкой"""
+    for attempt in range(max_retries):
+        try:
+            # Экспоненциальная задержка: 1с, 2с, 4с
+            delay = initial_delay * (2 ** attempt)
+            ws_logger.info(f"Попытка переподключения {attempt + 1}/{max_retries} через {delay}с")
+            
+            await asyncio.sleep(delay)
+            await manager.connect(websocket)
+            
+            ws_logger.info(f"WebSocket успешно переподключен: {websocket.client}")
+            return True
+            
+        except Exception as reconnect_error:
+            ws_logger.error(f"Ошибка при попытке переподключения {attempt + 1}: {reconnect_error}")
+    
+    ws_logger.error(f"Не удалось переподключиться после {max_retries} попыток")
+    return False
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

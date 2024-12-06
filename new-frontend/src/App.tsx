@@ -4,9 +4,14 @@ import { BotList } from './components/BotList';
 import { BotControl } from './components/BotControl';
 import { Header } from './components/Header';
 import { BotDashboard } from './components/BotDashboard';
+import { LoginForm } from './components/LoginForm';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import './index.css';
+import { Toaster } from 'react-hot-toast';
+import { NotificationProvider } from './contexts/NotificationContext';
 
-function App() {
+const AppContent: React.FC = () => {
+  const { isAuthenticated } = useAuth();
   const [selectedBotId, setSelectedBotId] = useState<number>(-1);
   const [isCreatingNewBot, setIsCreatingNewBot] = useState(false);
 
@@ -25,25 +30,46 @@ function App() {
     }
   }, []);
 
+  if (!isAuthenticated) {
+    return <LoginForm />;
+  }
+
   return (
     <WebSocketProvider>
-      <div className="App bg-almostGray min-h-screen pt-16 p-4">
-        <Header/>
-        <h1 className="text-4xl font-bold text-center text-white mb-8">Trading Bot</h1>
-        <BotList 
-          onBotSelect={handleBotSelect}
-          selectedBotId={selectedBotId} 
+      <NotificationProvider>
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            duration: 10000,
+            className: 'bg-gray-800 text-white',
+          }}
         />
-        
-        {isCreatingNewBot ? (
-          <div className="dashboard-grid">
-            <BotControl botId={-1} onBotStarted={handleBotStarted} />
-          </div>
-        ) : selectedBotId > 0 && (
-          <BotDashboard botId={selectedBotId} />
-        )}
-      </div>
+        <div className="App bg-almostGray min-h-screen pt-16 p-4">
+          <Header />
+          <h1 className="text-4xl font-bold text-center text-white mb-8">Trading Bot</h1>
+          <BotList
+            onBotSelect={handleBotSelect}
+            selectedBotId={selectedBotId}
+          />
+
+          {isCreatingNewBot ? (
+            <div className="dashboard-grid">
+              <BotControl botId={-1} onBotStarted={handleBotStarted} />
+            </div>
+          ) : selectedBotId > 0 && (
+            <BotDashboard botId={selectedBotId} />
+          )}
+        </div>
+      </NotificationProvider>
     </WebSocketProvider>
+  );
+};
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 
