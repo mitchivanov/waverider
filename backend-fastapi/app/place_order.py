@@ -7,7 +7,7 @@ async def main():
                                   testnet=True)
     
     try:
-        order = await binance_client.place_order_async('BTCUSDT', 'SELL', 0.1, 80000, 'LIMIT')
+        order = await binance_client.place_order_async('BTCUSDT', 'BUY', 0.1, 110000, 'LIMIT')
         print(order)
     finally:
         await binance_client.close()

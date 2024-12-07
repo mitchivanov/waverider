@@ -33,21 +33,26 @@ logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 class AsyncLogger:
     def __init__(self, bot_id, max_queue_size=1000):
-        # Создаем путь для логов конкретного бота
-        self.filename = f'logs/bot_{bot_id}/trades.log'
-        self.queue = asyncio.Queue(maxsize=max_queue_size)
+        # Создаем пути для логов конкретного бота
+        self.info_filename = f'logs/bot_{bot_id}/trades.log'
+        self.debug_filename = f'logs/bot_{bot_id}/debug.log'
+        
+        # Создаем отдельные очереди для каждого уровня логирования
+        self.info_queue = asyncio.Queue(maxsize=max_queue_size)
+        self.debug_queue = asyncio.Queue(maxsize=max_queue_size)
         self.running = True
         
         # Создаем директорию для логов конкретного бота
-        os.makedirs(os.path.dirname(self.filename), exist_ok=True)
+        os.makedirs(os.path.dirname(self.info_filename), exist_ok=True)
         
-        # Start the logging process
-        asyncio.create_task(self._process_logs())
+        # Start the logging processes
+        asyncio.create_task(self._process_logs(self.info_queue, self.info_filename))
+        asyncio.create_task(self._process_logs(self.debug_queue, self.debug_filename))
 
-    async def _write_immediately(self, message):
-        """Immediate writing to the log file"""
+    async def _write_immediately(self, message, filename):
+        """Immediate writing to the specified log file"""
         try:
-            async with aiofiles.open(self.filename, mode='a') as f:
+            async with aiofiles.open(filename, mode='a') as f:
                 await f.write(message)
         except Exception as e:
             print(f"Critical error writing to log: {e}")
@@ -55,48 +60,57 @@ class AsyncLogger:
     async def fatal(self, message):
         """logging and immediate exit"""
         formatted_message = f"[{datetime.datetime.now().isoformat()}] [FATAL] {message}\n"
-        await self._write_immediately(formatted_message)
+        await self._write_immediately(formatted_message, self.debug_filename)
         os._exit(1)  # Immediate exit
         
     async def panic(self, message):
         """logging and raising panic"""
         formatted_message = f"[{datetime.datetime.now().isoformat()}] [PANIC] {message}\n"
-        await self._write_immediately(formatted_message)
+        await self._write_immediately(formatted_message, self.debug_filename)
         raise RuntimeError(f"Panic: {message}")
         
     async def log(self, message):
-        """logging a message"""
-        await self.queue.put(f"[{datetime.datetime.now().isoformat()}] [INFO] {message}\n")
+        """logging an info message"""
+        await self.info_queue.put(f"[{datetime.datetime.now().isoformat()}] [INFO] {message}\n")
         
-    async def _process_logs(self):
-        """Processes the log queue and writes messages to the file"""
+    async def debug(self, message):
+        """logging a debug message"""
+        await self.debug_queue.put(f"[{datetime.datetime.now().isoformat()}] [DEBUG] {message}\n")
+        
+    async def _process_logs(self, queue, filename):
+        """Processes the log queue and writes messages to the specified file"""
         while self.running:
             try:
                 # Collect all available logs
                 messages = []
-                messages.append(await self.queue.get())
+                messages.append(await queue.get())
                 
                 # Check if there are any more logs in the queue
-                while not self.queue.empty() and len(messages) < 100:
+                while not queue.empty() and len(messages) < 100:
                     try:
-                        messages.append(self.queue.get_nowait())
+                        messages.append(queue.get_nowait())
                     except asyncio.QueueEmpty:
                         break
                 
                 # Write all collected logs at once
-                async with aiofiles.open(self.filename, mode='a') as f:
+                async with aiofiles.open(filename, mode='a') as f:
                     await f.writelines(messages)
                     
             except Exception as e:
-                print(f"Error writing to log file: {e}")
+                print(f"Error writing to log file {filename}: {e}")
                 await asyncio.sleep(1)
                 
     async def close(self):
         """Closes the logger"""
         self.running = False
         # Wait for the remaining logs to be processed
-        while not self.queue.empty():
+        while not self.info_queue.empty() or not self.debug_queue.empty():
             await asyncio.sleep(0.1)
+
+    async def error(self, message):
+        """logging an error message"""
+        formatted_message = f"[{datetime.datetime.now().isoformat()}] [ERROR] {message}\n"
+        await self._write_immediately(formatted_message, self.debug_filename)
 
 class GridStrategy(BaseStrategy):
     def __init__(
@@ -163,6 +177,8 @@ class GridStrategy(BaseStrategy):
         # Инициализируем логгер с ID бота
         self.trades_logger = AsyncLogger(bot_id)
         
+
+        
         # Инициализируем текущую цену
         asyncio.create_task(self.update_current_price())
 
@@ -171,12 +187,16 @@ class GridStrategy(BaseStrategy):
             try:
                 self.current_price = await self.binance_client.get_current_price_async(self.symbol)
                 await asyncio.sleep(1)  # Update every second
+                await self.trades_logger.log(f"Current price: {self.current_price}")
             except Exception as e:
                 await self.trades_logger.panic(f"Error updating current price: {e}")
                 await asyncio.sleep(5)  # Retry every 5 seconds in case of error
 
     def check_account_balance(self):
         """Check if the account balance is sufficient for the assigned funds."""
+        
+        
+        
         account_info = self.binance_client.client.get_account()
         balances = {balance['asset']: float(balance['free']) for balance in account_info['balances']}
 
@@ -265,7 +285,7 @@ class GridStrategy(BaseStrategy):
 
     async def calculate_grid_levels(self, current_price):
         """Calculate grid levels based on current price and deviation threshold."""
-        logging.info("Calculating grid levels based on the current price and deviation threshold.")
+        await self.trades_logger.log("Calculating grid levels based on the current price and deviation threshold.")
         step_distance = (self.deviation_threshold / self.grids) * current_price
         # Calculate buy levels (below current price) and sell levels (above current price)
         self.grid_levels['buy'] = [
@@ -274,8 +294,8 @@ class GridStrategy(BaseStrategy):
         self.grid_levels['sell'] = [
             current_price + (i * step_distance) for i in range(1, self.grids + 1)
         ]
-        logging.info(f"Buy levels: {self.grid_levels['buy']}")
-        logging.info(f"Sell levels: {self.grid_levels['sell']}")
+        await self.trades_logger.log(f"Buy levels: {self.grid_levels['buy']}")
+        await self.trades_logger.log(f"Sell levels: {self.grid_levels['sell']}")
 
     async def place_limit_order(self, price, order_type, isInitial, order_size, recvWindow=2000):
         """Place a limit order with proper error handling and validation."""
@@ -342,6 +362,8 @@ class GridStrategy(BaseStrategy):
                 order = await self.binance_client.place_order_async(
                     self.symbol, order_type.upper(), order_size, price, recvWindow=recvWindow
                 )
+                
+                await self.trades_logger.debug(f"Binance API Response: {order}")
 
                 if order and 'orderId' in order:
                     order_id = order['orderId']
@@ -386,11 +408,21 @@ class GridStrategy(BaseStrategy):
                     })
                     
                     # Return the order object
+                    await self.trades_logger.log(f"Order {order_id} placed successfully")
                     return order
+
                 elif order and order.get('code') == -1021:  # Timestamp for this request is outside of the recvWindow
                     # Retry with increased recvWindow
                     await self.trades_logger.panic(f"RecvWindow too small, retrying with increased window")
+                    os.system('w32tm/resync')
                     return await self.place_limit_order(price, order_type, isInitial, order_size, recvWindow=5000)
+                
+                elif order and order.get('status') == 'EXPIRED_IN_MATCH':
+                    # Handle EXPIRED_IN_MATCH by adjusting the price and retrying
+                    adjustment_factor = 1.0001 if order_type.lower() == 'buy' else 0.9999
+                    new_price = price * adjustment_factor
+                    await self.trades_logger.log(f"Order expired in match. Retrying with new price: {new_price}")
+                    return await self.place_limit_order(new_price, order_type, isInitial, order_size, recvWindow)
                 else:
                     # Handle other API errors
                     error_code = order.get('code')
@@ -421,37 +453,37 @@ class GridStrategy(BaseStrategy):
                     batch_levels = levels[i:i + batch_size]
                     batch_sizes = order_sizes[i:i + batch_size]
                     
-                    logging.info(f"Attempting to place batch of {len(batch_levels)} {order_type.upper()} orders "
+                    await self.trades_logger.log(f"Attempting to place batch of {len(batch_levels)} {order_type.upper()} orders "
                                f"for levels: {batch_levels[0]} to {batch_levels[-1]}")
 
                     for level_price, order_size in zip(batch_levels, batch_sizes):
                         try:
                             # Verify balance before placing order
                             if not self.is_balance_sufficient(order_type, level_price, order_size):
-                                logging.error(f"Insufficient balance for {order_type} order at {level_price}")
+                                await self.trades_logger.error(f"Insufficient balance for {order_type} order at {level_price}")
                                 failed_orders += 1
                                 retry_orders.append((level_price, order_size))
                                 continue
 
                             # Place order with increased recvWindow
                             result = await self.place_limit_order(price=level_price, order_type=order_type, isInitial=True, order_size=order_size)
-                            logging.debug(f"Binance API Response: {result}")
+                            await self.trades_logger.debug(f"Binance API Response: {result}")
                             if result and 'orderId' in result:
                                 successful_orders += 1
-                                logging.info(f"Successfully placed {order_type.upper()} order at ${level_price}")
+                                await self.trades_logger.log(f"Successfully placed {order_type.upper()} order at ${level_price}")
                             else:
                                 failed_orders += 1
                                 retry_orders.append((level_price, order_size))
-                                logging.error(f"Failed to place {order_type.upper()} order at ${level_price}")
+                                await self.trades_logger.error(f"Failed to place {order_type.upper()} order at ${level_price}")
                                 
                         except Exception as e:
                             failed_orders += 1
                             retry_orders.append((level_price, order_size))
-                            logging.error(f"Error placing {order_type.upper()} order at ${level_price}: {str(e)}")
+                            await self.trades_logger.error(f"Error placing {order_type.upper()} order at ${level_price}: {str(e)}")
 
                     # Log batch results with correct counts
-                    logging.info(f"Placed {order_type.upper()} orders for levels: {batch_levels[0]} to {batch_levels[-1]}.")
-                    logging.info(f"Successful orders: {successful_orders}, Failed orders: {failed_orders}")
+                    await self.trades_logger.log(f"Placed {order_type.upper()} orders for levels: {batch_levels[0]} to {batch_levels[-1]}.")
+                    await self.trades_logger.log(f"Successful orders: {successful_orders}, Failed orders: {failed_orders}")
                     
                     # Add delay between batches
                     await asyncio.sleep(1)
@@ -533,7 +565,7 @@ class GridStrategy(BaseStrategy):
                             try:
                                 # Check order status via Binance API
                                 order_status = await self.get_order_status(self.symbol, buy['order_id'])
-                                await self.trades_logger.log(f"Buy order {buy['order_id']} status: {order_status}")
+                                await self.trades_logger.debug(f"Buy order {buy['order_id']} status: {order_status}")
                                 
                                 if order_status == 'FILLED':
                                     await self.trades_logger.log(f"Buy order {buy['order_id']} filled at price ${buy['price']}")
@@ -542,7 +574,7 @@ class GridStrategy(BaseStrategy):
                                     await self.update_order_history(self.bot_id, buy['order_id'], 'FILLED')
                                     
                                     # Delete buy position from tracking
-                                    max_retries = 3
+                                    max_retries = 10
                                     retry_count = 0
                                     while retry_count < max_retries:
                                         try:
@@ -590,7 +622,7 @@ class GridStrategy(BaseStrategy):
                                             quote_asset = self.symbol[-4:]
                                             
                                             # Write to trade history using data from Binance response
-                                            await self.add_trade_to_history(
+                                            trade = await self.add_trade_to_history(
                                                 bot_id=self.bot_id,
                                                 buy_price=buy['price'],
                                                 sell_price=float(sell_order['price']),  # Use price from response
@@ -605,6 +637,7 @@ class GridStrategy(BaseStrategy):
                                             
                                             # Track open trade with data from response
                                             self.open_trades.append({
+                                                'id': trade.id,
                                                 'buy_order': buy,
                                                 'sell_order': {
                                                     'price': float(sell_order['price']),
@@ -644,7 +677,7 @@ class GridStrategy(BaseStrategy):
                             try:
                                 # Check order status via Binance API
                                 order_status = await self.get_order_status(self.symbol, sell['order_id'])
-                                await self.trades_logger.log(f"Sell order {sell['order_id']} status: {order_status}")
+                                await self.trades_logger.debug(f"Sell order {sell['order_id']} status: {order_status}")
                                 
                                 if order_status == 'FILLED':
                                     await self.trades_logger.log(f"Sell order {sell['order_id']} filled at price ${sell['price']}")
@@ -699,7 +732,7 @@ class GridStrategy(BaseStrategy):
                                             base_asset = self.symbol[:-4]
                                             
                                             # Write to trade history using data from Binance response
-                                            await self.add_trade_to_history(
+                                            trade = await self.add_trade_to_history(
                                                 bot_id=self.bot_id,
                                                 buy_price=float(buy_order['price']),
                                                 sell_price=sell['price'],
@@ -714,6 +747,7 @@ class GridStrategy(BaseStrategy):
                                             
                                             # Track open trade
                                             self.open_trades.append({
+                                                'id': trade.id,
                                                 'sell_order': sell,
                                                 'buy_order': {
                                                     'price': float(buy_order['price']),
@@ -934,15 +968,14 @@ class GridStrategy(BaseStrategy):
         await self.trades_logger.log("Starting check of open trades")
         
         for trade in list(self.open_trades):
-            await self.trades_logger.log(f"Checking trade details: {trade}")
+            await self.trades_logger.log(f"Now checking {trade['trade_type']} trade with details: {trade}. Trade id: {trade['id']}")
             try:
                 # Check for buy-sell sequence trades
                 if 'buy_order' in trade and 'sell_order' in trade and trade['trade_type'] == 'BUY_SELL':
-                    await self.trades_logger.log("Processing BUY_SELL trade sequence")
                     buy_order = trade['buy_order']
                     sell_order = trade['sell_order']
                     order_status = await self.get_order_status(self.symbol, sell_order.get('order_id'))
-                    await self.trades_logger.log(f"CHECKING TRADE: Sell order status: {order_status}")
+                    await self.trades_logger.log(f"CHECKING {trade['id']} TRADE: Sell order status: {order_status}")
                     
                     if order_status == 'FILLED':
                         await self.trades_logger.log("Sell order is filled, processing sell order")
@@ -980,13 +1013,13 @@ class GridStrategy(BaseStrategy):
                         self.open_trades.remove(trade)
                         await self.trades_logger.log("BUY_SELL trade successfully closed and recorded")
                         
+
                 # Check for sell-buy sequence trades        
                 elif 'sell_order' in trade and 'buy_order' in trade and trade['trade_type'] == 'SELL_BUY':
-                    await self.trades_logger.log("Processing SELL_BUY trade sequence")
                     buy_order = trade['buy_order']
                     sell_order = trade['sell_order']
                     order_status = await self.get_order_status(self.symbol, buy_order.get('order_id'))
-                    await self.trades_logger.log(f"CHECKING TRADE: Buy order status: {order_status}")
+                    await self.trades_logger.log(f"CHECKING {trade['id']} TRADE: Buy order status: {order_status}")
                     
                     if order_status == 'FILLED':
                         await self.trades_logger.log("Buy order is filled, processing buy order")
@@ -1084,6 +1117,7 @@ class GridStrategy(BaseStrategy):
             logging.info(f"Попытка добавить сделку в историю: buy_price={buy_price}, sell_price={sell_price}, quantity={quantity}")
             
             trade_data = {
+                'id': None,  # Будет заполнено после добавления в БД
                 'bot_id': bot_id,
                 'buy_price': buy_price,
                 'sell_price': sell_price,
@@ -1097,15 +1131,7 @@ class GridStrategy(BaseStrategy):
                 'executed_at': datetime.datetime.now()
             }
             
-            # Add to local history
-            try:
-                self.trade_history.append(trade_data)
-                await self.trades_logger.log("Сделка успешно добавлена в локальную историю")
-            except Exception as e:
-                await self.trades_logger.panic(f"Ошибка при добавлении в локальную историю: {e}")
-                raise
-            
-            # Add to the database
+            # Add to the database first to get the ID
             try:
                 async with async_session() as session:
                     trade = TradeHistory(
@@ -1123,38 +1149,48 @@ class GridStrategy(BaseStrategy):
                     )
                     session.add(trade)
                     await session.commit()
-                    await self.trades_logger.log(f"Сделка успешно добавлена в базу данных: {trade}")
+                    await session.refresh(trade)  # Получаем обновленную запись с ID
+                    
+                    # Добавляем ID в trade_data
+                    trade_data['id'] = trade.id
+                    
+                    # Add to local history with ID
+                    self.trade_history.append(trade_data)
+                    await self.trades_logger.debug(f"Added trade with ID {trade.id} to local history")
+                    
+                    return trade  # Возвращаем ID новой сделки
+                    
             except Exception as e:
-                await self.trades_logger.panic(f"Ошибка при добавлении сделки в базу данных: {e}")
+                await self.trades_logger.panic(f"Error adding trade to database: {e}")
                 raise
                 
         except Exception as e:
-            await self.trades_logger.panic(f"Критическая ошибка в add_trade_to_history: {e}")
+            await self.trades_logger.panic(f"Critical error in add_trade_to_history: {e}")
             raise
 
     async def add_active_order(self, bot_id, order_data):
-        """Добавляет активный орде в базу данных и локальный список."""
+        """Adds an active order to the database and local list."""
         try:
-            # Создаем объект ActiveOrder
+            # Create ActiveOrder object
             active_order = ActiveOrder(
                 bot_id=bot_id,
-                order_id=order_data["order_id"],  # Изменено с orderId
-                order_type=order_data["order_type"],  # Изменено с side
+                order_id=order_data["order_id"],
+                order_type=order_data["order_type"],
                 isInitial=order_data["isInitial"],
                 price=float(order_data["price"]),
-                quantity=float(order_data["quantity"]),  # Изменено с origQty
+                quantity=float(order_data["quantity"]),
                 created_at=datetime.datetime.now()
             )
             
-            # Сохраняем в базу данных
+            # Save to database
             async with async_session() as session:
-                # Проверяем существование ордера
+                # Check if order exists
                 existing_order = await session.execute(
                     select(ActiveOrder).where(ActiveOrder.order_id == active_order.order_id, 
                                               ActiveOrder.bot_id == bot_id)
                 )
                 if existing_order.scalar_one_or_none():
-                    # Если ордер существует, обновляем его
+                    # If order exists, update it
                     await session.execute(
                         update(ActiveOrder)
                         .where(ActiveOrder.order_id == active_order.order_id, 
@@ -1167,14 +1203,14 @@ class GridStrategy(BaseStrategy):
                         )
                     )
                 else:
-                    # Если ордера нет, добавляем новый
+                    # If order doesn't exist, add new
                     session.add(active_order)
                 
                 await session.commit()
                 
-            # Обновляем локальный список
-            self.active_orders = [order for order in self.active_orders if order["order_id"] != active_order.order_id]
-            self.active_orders.append({
+                # Update local list
+                self.active_orders = [order for order in self.active_orders if order["order_id"] != active_order.order_id]
+                self.active_orders.append({
                 "order_id": active_order.order_id,
                 "order_type": active_order.order_type,
                 "price": active_order.price,
@@ -1184,13 +1220,13 @@ class GridStrategy(BaseStrategy):
             
             
         except Exception as e:
-            logging.error(f"Ошибка при сохранении активного ордера: {e}")
+            await self.trades_logger.panic(f"Error saving active order: {e}")
 
     async def update_trade_in_history(self, bot_id, buy_price, sell_price, quantity, profit, profit_asset, status, trade_type):
         """Updates an existing trade in the history when it is closed."""
         async with async_session() as session:
             try:
-                # Добавляем ORDER BY executed_at DESC чтобы получить самую последнюю сделку
+                # Add ORDER BY executed_at DESC to get the latest trade
                 result = await session.execute(
                     select(TradeHistory).where(
                         TradeHistory.buy_price == buy_price,
@@ -1244,7 +1280,7 @@ class GridStrategy(BaseStrategy):
                 
             # Delete from local list
             self.active_orders = [order for order in self.active_orders if order['order_id'] != order_id]
-            await self.trades_logger.log(f"Order {order_id} removed from active orders")
+            await self.trades_logger.debug(f"Order {order_id} removed from active orders")
             
             # Delete from buy and sell positions
             self.buy_positions = [position for position in self.buy_positions if position['order_id'] != order_id]
@@ -1269,7 +1305,7 @@ class GridStrategy(BaseStrategy):
                 )
                 session.add(order_history)
                 await session.commit()
-                await self.trades_logger.log(f"Order {order_id} added to history")
+                await self.trades_logger.debug(f"Order {order_id} added to history")
         except Exception as e:
             await self.trades_logger.panic(f"Error adding order to history: {e}")
             raise
@@ -1287,9 +1323,9 @@ class GridStrategy(BaseStrategy):
                     order.status = new_status
                     order.updated_at = datetime.datetime.now()
                     await session.commit()
-                    await self.trades_logger.log(f"Order {order_id} status updated to {new_status}")
+                    await self.trades_logger.debug(f"Order {order_id} status updated to {new_status}")
                 else:
-                    await self.trades_logger.log(f"Order {order_id} not found in history")
+                    await self.trades_logger.debug(f"Order {order_id} not found in history")
                     
         except Exception as e:
             await self.trades_logger.panic(f"Error updating order history: {e}")
@@ -1420,7 +1456,7 @@ class GridStrategy(BaseStrategy):
             raise
 
     async def stop_strategy(self):
-        """Останалвает стратегию и очищает все ресурсы."""
+        """Останавливает стратегию и очищает все ресурсы."""
         try:
             # Устанаввием флаг остановки
             self.stop_flag = True
