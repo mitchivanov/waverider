@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useWebSocket } from '../services/WebSocketMaster';
 import { BotStatus } from './BotStatus';
 import { TradeHistory } from './TradeHistory';
@@ -14,6 +14,7 @@ interface BotDashboardProps {
 export const BotDashboard: React.FC<BotDashboardProps> = ({ botId }) => {
     const { subscribe, unsubscribe, lastMessage } = useWebSocket();
     const { addNotification } = useNotifications();
+    const lastProcessedNotification = useRef<string | null>(null);
 
     useEffect(() => {
         // Подписываемся на все необходимые типы данных
@@ -38,15 +39,21 @@ export const BotDashboard: React.FC<BotDashboardProps> = ({ botId }) => {
     useEffect(() => {
         if (lastMessage[`${botId}_notification`]) {
             const notification = lastMessage[`${botId}_notification`];
-            if (notification.notification_type === 'new_trade') {
-                const { trade_type, buy_price, sell_price, quantity, symbol } = notification.payload;
-                addNotification('new_trade', 'New Trade Executed', {
-                    type: trade_type === 'BUY_SELL' ? 'Long' : 'Short',
-                    symbol: symbol,
-                    buyPrice: `$${buy_price.toFixed(2)}`,
-                    sellPrice: `$${sell_price.toFixed(2)}`,
-                    quantity: quantity.toFixed(8)
-                });
+            const notificationKey = `${notification.notification_type}_${notification.payload.buy_price}_${notification.payload.sell_price}`;
+            
+            if (lastProcessedNotification.current !== notificationKey) {
+                lastProcessedNotification.current = notificationKey;
+                
+                if (notification.notification_type === 'new_trade') {
+                    const { trade_type, buy_price, sell_price, quantity, symbol } = notification.payload;
+                    addNotification('trade', 'New Trade Executed', {
+                        type: trade_type === 'BUY_SELL' ? 'Long' : 'Short',
+                        symbol: symbol,
+                        buyPrice: `$${buy_price.toFixed(2)}`,
+                        sellPrice: `$${sell_price.toFixed(2)}`,
+                        quantity: quantity.toFixed(8)
+                    });
+                }
             }
         }
     }, [lastMessage, botId, addNotification]);

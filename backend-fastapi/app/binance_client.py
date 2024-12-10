@@ -332,7 +332,7 @@ class BinanceClient:
 
     async def is_balance_sufficient(self, base_asset: str, quote_asset: str, base_asset_funds: float, quote_asset_funds: float):
         """Check if the account balance is sufficient for the assigned funds."""
-        account_info = self.client.get_account()
+        account_info = await self.get_account_async()
         balances = {balance['asset']: float(balance['free']) for balance in account_info['balances']}
 
         # Check if there is enough balance for asset A (quote asset)
@@ -352,4 +352,47 @@ class BinanceClient:
         except Exception as e:
             logging.error(f"Ошибка при получении балансов: {e}")
             raise Exception(f"Не удалось получить балансы: {str(e)}")
+
+    async def get_open_orders_async(self, symbol: str) -> list:
+        """
+        Получает список открытых ордеров для указанного символа.
+        
+        Args:
+            symbol (str): Торговая пара
+            
+        Returns:
+            list: Список открытых ордеров
+        """
+        endpoint = '/api/v3/openOrders'
+        timestamp = int(time.time() * 1000)
+        params = {
+            'symbol': symbol,
+            'timestamp': str(timestamp)
+        }
+
+        # Создаем подпись
+        query_string = '&'.join([f"{key}={value}" for key, value in params.items()])
+        signature = hmac.new(
+            self.api_secret.encode('utf-8'),
+            query_string.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        params['signature'] = signature
+
+        try:
+            async with self.session.get(
+                f"{self.BASE_URL}{endpoint}",
+                params=params,
+                headers={'X-MBX-APIKEY': self.api_key}
+            ) as resp:
+                if resp.status == 200:
+                    orders = await resp.json()
+                    return orders
+                logging.error(f"Failed to get open orders: {await resp.text()}")
+                return []
+        except Exception as e:
+            logging.error(f"Error getting open orders: {str(e)}")
+            return []
+ 
+ 
  

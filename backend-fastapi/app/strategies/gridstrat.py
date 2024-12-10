@@ -7,7 +7,7 @@ from binance_websocket import BinanceWebSocket
 import os
 import decimal
 import time
-from sqlalchemy import delete
+from sqlalchemy import delete, update, or_
 import datetime
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base
@@ -170,6 +170,8 @@ class GridStrategy(BaseStrategy):
 
         # Check account balance
         self.check_account_balance()
+        
+        self.sync_orders_with_binance()
 
         # После существующих инициализаций
         self.start_time = datetime.datetime.now()
@@ -180,17 +182,88 @@ class GridStrategy(BaseStrategy):
 
         
         # Инициализируем текущую цену
-        asyncio.create_task(self.update_current_price())
+        asyncio.create_task(self.update_current_price_and_balance())
 
-    async def update_current_price(self):
+    async def update_current_price_and_balance(self):
+        session = None  # Отдельная сессия для этого модуля
         while True:
             try:
-                self.current_price = await self.binance_client.get_current_price_async(self.symbol)
-                await asyncio.sleep(1)  # Update every second
-                await self.trades_logger.log(f"Current price: {self.current_price}")
+                if session is None:
+                    session = aiohttp.ClientSession()
+
+                # Устанавливаем таймаут для операций
+                async with asyncio.timeout(10):  # 10 секунд таймаут
+                    # Обновляем текущую цену с повторными попытками
+                    retry_count = 0
+                    max_retries = 3
+                    
+                    while retry_count < max_retries:
+                        try:
+                            self.current_price = await self.binance_client.get_current_price_async(
+                                self.symbol, 
+                                session=session  # Используем выделенную сессию
+                            )
+                            break
+                        except Exception as e:
+                            retry_count += 1
+                            if retry_count == max_retries:
+                                await self.trades_logger.error(f"Failed to update price after {max_retries} attempts: {e}")
+                                raise
+                            await asyncio.sleep(1)
+
+                    # Получаем информацию об аккаунте с повторными попытками
+                    retry_count = 0
+                    while retry_count < max_retries:
+                        try:
+                            account_info = await self.binance_client.get_account_async(session=session)
+                            break
+                        except Exception as e:
+                            retry_count += 1
+                            if retry_count == max_retries:
+                                await self.trades_logger.error(f"Failed to get account info after {max_retries} attempts: {e}")
+                                raise
+                            await asyncio.sleep(1)
+
+                    # Создаем словари для free и total балансов
+                    free_balances = {}
+                    total_balances = {}
+                    
+                    for balance in account_info['balances']:
+                        asset = balance['asset']
+                        free_balances[asset] = float(balance['free'])
+                        total_balances[asset] = float(balance['free']) + float(balance['locked'])
+
+                    quote_asset = self.symbol[-4:]
+                    base_asset = self.symbol[:-4]
+                    
+                    # Логируем текущую цену и балансы
+                    await self.trades_logger.log(
+                        f"Update status:\n"
+                        f"Current price: {self.current_price}\n"
+                        f"Balances:\n"
+                        f"{base_asset}: Free={free_balances.get(base_asset, 0):.8f}, "
+                        f"Total={total_balances.get(base_asset, 0):.8f}\n"
+                        f"{quote_asset}: Free={free_balances.get(quote_asset, 0):.8f}, "
+                        f"Total={total_balances.get(quote_asset, 0):.8f}"
+                    )
+
+            except asyncio.TimeoutError:
+                await self.trades_logger.error("Timeout while updating price and balance")
+                # Закрываем только текущую сессию модуля
+                if session:
+                    await session.close()
+                    session = None  # Сбрасываем сессию для пересоздания
+                await asyncio.sleep(1)  # Небольшая пауза перед пересозданием
+            
             except Exception as e:
-                await self.trades_logger.panic(f"Error updating current price: {e}")
-                await asyncio.sleep(5)  # Retry every 5 seconds in case of error
+                await self.trades_logger.error(f"Error updating price and balance: {e}")
+                if session:
+                    await session.close()
+                    session = None
+                await asyncio.sleep(1)
+            
+            finally:
+                await asyncio.sleep(1)  # Пауза между обновлениями
 
     def check_account_balance(self):
         """Check if the account balance is sufficient for the assigned funds."""
@@ -304,7 +377,8 @@ class GridStrategy(BaseStrategy):
             try:
                 # Perform a balance check before placing the order
                 if not self.is_balance_sufficient(order_type, price, order_size):
-                    await self.trades_logger.fatal(f"Insufficient balance to place {order_type.upper()} order at ${price} for {order_size} units.")
+                    await self.trades_logger.error(f"Insufficient balance to place {order_type.upper()} order at ${price} for {order_size} units.")
+                    await self.cancel_all_orders_async(self.bot_id)
                     return
 
                 # Retrieve exchange info
@@ -922,45 +996,77 @@ class GridStrategy(BaseStrategy):
             'max_notional': max_notional
         }
 
-    def is_balance_sufficient(self, order_type, price, quantity):
+    async def is_balance_sufficient(self, order_type, price, quantity):
         """Check if there is sufficient balance to place the order."""
         try:
-            # Use the same synchronous method as in check_account_balance
+            # Получаем информацию об аккаунте
             account_info = self.binance_client.client.get_account()
-            balances = {
-                balance['asset']: float(balance['free']) 
-                for balance in account_info['balances']
-            }
+            
+            # Создаем словари для free и total балансов
+            free_balances = {}
+            total_balances = {}
+            
+            for balance in account_info['balances']:
+                asset = balance['asset']
+                free_balances[asset] = float(balance['free'])
+                total_balances[asset] = float(balance['free']) + float(balance['locked'])
 
             quote_asset = self.symbol[-4:]  # e.g., 'USDT'
             base_asset = self.symbol[:-4]   # e.g., 'BTC'
 
+            # Логируем балансы обоих активов
+            await self.trades_logger.log(
+                f"Asset balances:\n"
+                f"{base_asset}: Free={free_balances.get(base_asset, 0):.8f}, "
+                f"Total={total_balances.get(base_asset, 0):.8f}\n"
+                f"{quote_asset}: Free={free_balances.get(quote_asset, 0):.8f}, "
+                f"Total={total_balances.get(quote_asset, 0):.8f}"
+            )
+
             if order_type.lower() == 'buy':
                 required_quote = price * quantity
-                available_quote = balances.get(quote_asset, 0)
+                available_quote = free_balances.get(quote_asset, 0)
                 
                 if available_quote < required_quote:
-                    logging.warning(
+                    await self.trades_logger.error(
                         f"Insufficient {quote_asset} balance. "
-                        f"Required: {required_quote:.8f}, Available: {available_quote:.8f}"
+                        f"Required: {required_quote:.8f}, "
+                        f"Available (Free): {available_quote:.8f}, "
+                        f"Total: {total_balances.get(quote_asset, 0):.8f}"
                     )
                     return False
-                    
+                else:
+                    await self.trades_logger.log(
+                        f"Sufficient balance for {quote_asset}. "
+                        f"Required: {required_quote:.8f}, "
+                        f"Available (Free): {available_quote:.8f}, "
+                        f"Total: {total_balances.get(quote_asset, 0):.8f}"
+                    )
+                    return True
+
             elif order_type.lower() == 'sell':
                 required_base = quantity
-                available_base = balances.get(base_asset, 0)
+                available_base = free_balances.get(base_asset, 0)
                 
                 if available_base < required_base:
-                    logging.warning(
+                    await self.trades_logger.error(
                         f"Insufficient {base_asset} balance. "
-                        f"Required: {required_base:.8f}, Available: {available_base:.8f}"
+                        f"Required: {required_base:.8f}, "
+                        f"Available (Free): {available_base:.8f}, "
+                        f"Total: {total_balances.get(base_asset, 0):.8f}"
                     )
                     return False
-
-            return True
+                else:
+                    await self.trades_logger.log(
+                        f"Sufficient balance for {base_asset}. "
+                        f"Required: {required_base:.8f}, "
+                        f"Available (Free): {available_base:.8f}, "
+                        f"Total: {total_balances.get(base_asset, 0):.8f}"
+                    )
+                    return True
 
         except Exception as e:
-            logging.error(f"Error checking balance: {e}")
+            await self.trades_logger.error(f"Error checking balance: {e}")
             return True  # Allow the exchange to handle insufficient balance
 
     async def check_open_trades(self):
@@ -1506,6 +1612,90 @@ class GridStrategy(BaseStrategy):
         except Exception as e:
             logging.error(f"Ошибк при запуске стратегии: {e}")
             raise e
+        
+        
+    async def sync_orders_with_binance(self):
+        """
+        Synchronizes local orders with Binance orders.
+        Recreates missing orders and updates related trades.
+        """
+        try:
+            await self.trades_logger.log("Syncing orders with Binance...")
+            # Get all open orders from Binance
+            binance_orders = await self.binance_client.get_open_orders_async(self.symbol)
+            binance_order_ids = {str(order['orderId']) for order in binance_orders}
+
+            # Get our local orders
+            async with async_session() as session:
+                result = await session.execute(
+                    select(ActiveOrder).where(ActiveOrder.bot_id == self.bot_id)
+                )
+                local_orders = result.scalars().all()
+
+            # Check each local order
+            for local_order in local_orders:
+                if str(local_order.order_id) not in binance_order_ids:
+                    await self.trades_logger.log(f"Order {local_order.order_id} not found on Binance. Recreating...")
+
+                    # Get related trade
+                    result = await session.execute(
+                        select(TradeHistory).where(
+                            or_(
+                                TradeHistory.buy_order_id == local_order.order_id,
+                                TradeHistory.sell_order_id == local_order.order_id
+                            ),
+                            TradeHistory.status == 'OPEN'
+                        )
+                    )
+                    trade = result.scalar_one_or_none()
+
+                    if trade:
+                        # Create new order with the same parameters
+                        new_order = await self.binance_client.place_order_async(
+                            symbol=self.symbol,
+                            side=local_order.order_type.upper(),
+                            quantity=local_order.quantity,
+                            price=local_order.price
+                        )
+
+                        if new_order and 'orderId' in new_order:
+                            # Update order ID in trade
+                            if trade.buy_order_id == local_order.order_id:
+                                await session.execute(
+                                    update(TradeHistory)
+                                    .where(TradeHistory.id == trade.id)
+                                    .values(buy_order_id=str(new_order['orderId']))
+                                )
+                            else:
+                                await session.execute(
+                                    update(TradeHistory)
+                                    .where(TradeHistory.id == trade.id)
+                                    .values(sell_order_id=str(new_order['orderId']))
+                                )
+
+                            # Delete old order from DB
+                            await session.execute(
+                                delete(ActiveOrder).where(ActiveOrder.order_id == local_order.order_id)
+                            )
+                            
+                            # Add new order to DB
+                            new_active_order = ActiveOrder(
+                                bot_id=self.bot_id,
+                                order_id=new_order['orderId'],
+                                order_type=local_order.order_type,
+                                isInitial=local_order.isInitial,
+                                price=float(new_order['price']),
+                                quantity=float(new_order['origQty'])
+                            )
+                            session.add(new_active_order)
+                            await session.commit()
+
+                            await self.trades_logger.log(f"Successfully recreated order {local_order.order_id} as {new_order['orderId']}")
+                        else:
+                            await self.trades_logger.error(f"Failed to recreate order {local_order.order_id}")
+
+        except Exception as e:
+            await self.trades_logger.error(f"Error in sync_orders_with_binance: {e}")
 
 async def start_grid_strategy(parameters: dict) -> GridStrategy:
     """

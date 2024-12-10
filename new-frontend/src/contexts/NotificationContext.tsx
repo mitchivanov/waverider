@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { toast } from 'react-hot-toast';
 import { v4 as uuidv4 } from 'uuid';
 import { Notification } from '../types';
@@ -13,8 +13,19 @@ const NotificationContext = createContext<NotificationContextType | null>(null);
 
 export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const recentNotifications = useRef<Record<string, number>>({});
 
   const addNotification = useCallback((type: 'trade' | 'error' | 'info', message: string, details?: Record<string, any>) => {
+    const notificationKey = `${type}_${message}_${JSON.stringify(details)}`;
+    
+    const now = Date.now();
+    if (recentNotifications.current[notificationKey] && 
+        now - recentNotifications.current[notificationKey] < 10000) {
+        return;
+    }
+    
+    recentNotifications.current[notificationKey] = now;
+
     const notification: Notification = {
       id: uuidv4(),
       type,
