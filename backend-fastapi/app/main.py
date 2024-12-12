@@ -57,7 +57,7 @@ app.add_middleware(
 
 # Хранилище KlineManager по WebSocket соединениям
 kline_managers: Dict[int, KlineManager] = {}
-kline_tasks: Dict[int, asyncio.Task] = {} 
+kline_tasks: Dict[int, asyncio.Task] = {}
 
 active_tasks = {}  # Словарь для отслеживания активных задач
 
@@ -77,14 +77,47 @@ async def startup_event():
 async def start_bot(params: dict):
     async with async_session() as session:
         try:
-            base_asset = params.get('baseAsset')
-            quote_asset = params.get('quoteAsset')
-            base_asset_funds = params.get('asset_b_funds')
-            quote_asset_funds = params.get('asset_a_funds')
+            logging.info(f"Получены параметры для запуска бота: {params}")
             
-            binance_client = BinanceClient(api_key=params['api_key'], api_secret=params['api_secret'], testnet=params.get('testnet'))
+            # Проверяем наличие всех необходимых параметров
+            if params['type'] == 'sellbot':
+                required_params = ['min_price', 'max_price', 'num_levels', 
+                                 'reset_threshold_pct', 'batch_size', 'symbol', 'baseAsset']
+                for param in required_params:
+                    if param not in params:
+                        logging.error(f"Отсутствует обязательный параметр: {param}")
+                        raise ValueError(f"Missing required parameter: {param}")
+                    logging.info(f"Параметр {param}: {params[param]}")
+                
+                base_asset = params.get('baseAsset')
+                base_asset_funds = params.get('batch_size')
+                
+                binance_client = BinanceClient(
+                    api_key=params['api_key'], 
+                    api_secret=params['api_secret'], 
+                    testnet=params.get('testnet')
+                )
+                
+                await binance_client.is_balance_sufficient(
+                    base_asset=base_asset,
+                    base_asset_funds=base_asset_funds
+                )
+                
+                
+                
             
-            await binance_client.is_balance_sufficient(base_asset, quote_asset, base_asset_funds, quote_asset_funds)
+            
+            elif params['type'] == 'grid':
+                
+                base_asset = params.get('baseAsset')
+                quote_asset = params.get('quoteAsset')
+                base_asset_funds = params.get('asset_b_funds')
+                quote_asset_funds = params.get('asset_a_funds')
+
+            
+                binance_client = BinanceClient(api_key=params['api_key'], api_secret=params['api_secret'], testnet=params.get('testnet'))
+
+                await binance_client.is_balance_sufficient(base_asset, quote_asset, base_asset_funds, quote_asset_funds)
             
             #TODO: проверка на наличие средств на балансе
 
@@ -103,6 +136,7 @@ async def start_bot(params: dict):
             await session.refresh(bot)
             
             # Запускаем бота через менеджер
+            logging.info(f"Запуск бота {bot.id} типа {params['type']} с параметрами: {params}")
             await TradingBotManager.start_bot(
                 bot_id=bot.id,
                 bot_type=params['type'],
@@ -187,6 +221,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     task = asyncio.create_task(order_history_service(bot_id))
                 elif msg_type == "trade_history":
                     task = asyncio.create_task(trade_history_service(bot_id))
+                elif msg_type == "candlestick_data":
+                    task = asyncio.create_task(candle_data_service(bot_id))
+                #elif msg_type == "candlestick_1m":
+                    #task = asyncio.create_task(candlestick_1m_service(bot_id))
                 else:
                     continue
 
@@ -454,6 +492,48 @@ async def trade_history_service(bot_id: int):
             except Exception as e:
                 ws_logger.error(f"Ошибка при отправке trade_history_data: {e}")
                 await asyncio.sleep(5)
+                
+
+async def candle_data_service(bot_id: int):
+    async with async_session() as session:
+        try:
+            ws_logger.debug(f"candle_data_service: bot_id = {bot_id}")
+            
+            bot = await TradingBotManager.get_bot_by_id(bot_id)
+            
+            if bot_id not in kline_managers:
+                kline_managers[bot_id] = KlineManager(symbol=bot.symbol, interval="1m")
+             
+            historical_klines = await kline_managers[bot_id].fetch_kline_data(limit=100)
+            if historical_klines:
+                historical_message = {
+                    "type": "historical_kline_data",
+                    "bot_id": bot_id,
+                    "symbol": bot.symbol,
+                    "data": historical_klines
+                }
+                await manager.broadcast(historical_message)
+                
+            last_candle_time = None
+            ohlc = {
+                "open": 0.0,
+                "high": 0.0,
+                "low": float('inf'),
+                "close": 0.0,
+                "volume": 0.0
+            }
+            candle_interval = 15
+
+            while True:
+                try:
+                    ws_logger.debug(f"candle_data_service: bot_id = {bot_id}")
+                except Exception as e:
+                    ws_logger.error(f"Ошибка при отправке candle_data: {e}")
+                    await asyncio.sleep(5)
+                    
+        except Exception as e:
+            ws_logger.error(f"Ошибка при отправке candle_data_: {e}")
+            await asyncio.sleep(5)
 
 @app.post("/api/balance")
 async def get_balance(params: dict):

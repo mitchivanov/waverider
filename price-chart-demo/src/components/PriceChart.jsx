@@ -1,21 +1,33 @@
 import React, { useEffect, useRef } from 'react';
 import {
   createChart,
-  IChartApi,
-  ISeriesApi,
   ColorType,
   LineStyle,
+  CrosshairMode,
 } from 'lightweight-charts';
 import { generatePriceData, generateOrders } from '../utils/generateTestData';
 
-export const PriceChart: React.FC = () => {
-  const chartContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const lineSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const orderSeriesRefs = useRef<ISeriesApi<'Line'>[]>([]);
+export const PriceChart = () => {
+  const chartContainerRef = useRef(null);
+  const chartRef = useRef(null);
+  const lineSeriesRef = useRef(null);
+  const orderSeriesRefs = useRef([]);
+  const tooltipRef = useRef(null);
 
   useEffect(() => {
     if (chartContainerRef.current) {
+      const tooltip = document.createElement('div');
+      tooltip.style.position = 'absolute';
+      tooltip.style.display = 'none';
+      tooltip.style.padding = '8px';
+      tooltip.style.backgroundColor = 'rgba(30, 34, 45, 0.9)';
+      tooltip.style.color = '#DDD';
+      tooltip.style.borderRadius = '4px';
+      tooltip.style.fontSize = '12px';
+      tooltip.style.zIndex = '1000';
+      chartContainerRef.current.appendChild(tooltip);
+      tooltipRef.current = tooltip;
+
       const chart = createChart(chartContainerRef.current, {
         width: 800,
         height: 400,
@@ -26,6 +38,9 @@ export const PriceChart: React.FC = () => {
         grid: {
           vertLines: { color: '#2B2B43' },
           horzLines: { color: '#2B2B43' }
+        },
+        crosshair: {
+          mode: CrosshairMode.Normal,
         },
         timeScale: {
           timeVisible: true,
@@ -53,33 +68,52 @@ export const PriceChart: React.FC = () => {
       const currentPrice = priceData[priceData.length - 1].value;
       const orders = generateOrders(currentPrice);
 
-      // Создаем отдельную серию для каждого ордера
       orders.forEach(order => {
         const orderSeries = chart.addLineSeries({
           color: order.type === 'buy' ? '#4CAF50' : '#FF5252',
           lineWidth: 1,
           lineStyle: LineStyle.Dotted,
           priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
         });
 
-        // Добавляем данные только для периода действия ордера
+        const markers = [
+          {
+            time: order.openTime,
+            position: 'inBar',
+            color: order.type === 'buy' ? '#4CAF50' : '#FF5252',
+            shape: 'circle',
+            text: `${order.type === 'buy' ? 'Buy' : 'Sell'} Open $${order.price}`,
+          },
+          {
+            time: order.closeTime,
+            position: 'inBar',
+            color: order.type === 'buy' ? '#4CAF50' : '#FF5252',
+            shape: 'circle',
+            text: `${order.type === 'buy' ? 'Buy' : 'Sell'} Close $${order.price}`,
+          }
+        ];
+
         orderSeries.setData([
           { time: order.openTime, value: order.price },
           { time: order.closeTime, value: order.price }
         ]);
-
-        orderSeriesRefs.current.push(orderSeries);
+        
+        orderSeries.setMarkers(markers);
+        orderSeriesRefs.current.push({ series: orderSeries, orderInfo: order });
       });
 
       chart.timeScale().fitContent();
 
       return () => {
         chart.remove();
+        tooltipRef.current?.remove();
       };
     }
   }, []);
 
   return (
-    <div ref={chartContainerRef} />
+    <div ref={chartContainerRef} style={{ position: 'relative' }} />
   );
 };

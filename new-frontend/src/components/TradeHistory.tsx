@@ -41,7 +41,7 @@ export const TradeHistory: React.FC<TradeHistoryProps> = ({ botId }) => {
   return (
     <div className="trade-history bg-gray-800 p-6 rounded-lg shadow-lg">
       <h2 className="text-2xl font-semibold text-white mb-4">Trade History</h2>
-      <div className="overflow-auto">
+      <div className="overflow-auto max-h-[400px]">
         <table className="min-w-full bg-gray-700 rounded-md">
           <thead>
             <tr>

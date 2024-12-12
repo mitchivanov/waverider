@@ -330,20 +330,30 @@ class BinanceClient:
             return None
 
 
-    async def is_balance_sufficient(self, base_asset: str, quote_asset: str, base_asset_funds: float, quote_asset_funds: float):
-        """Check if the account balance is sufficient for the assigned funds."""
+    async def is_balance_sufficient(self, base_asset: str, quote_asset: str = None, base_asset_funds: float = 0, quote_asset_funds: float = 0):
+        """
+        Check if the account balance is sufficient for the assigned funds.
+        
+        Args:
+            base_asset (str): Base asset symbol (required)
+            quote_asset (str, optional): Quote asset symbol
+            base_asset_funds (float, optional): Required base asset amount
+            quote_asset_funds (float, optional): Required quote asset amount
+        """
         account_info = await self.get_account_async()
         balances = {balance['asset']: float(balance['free']) for balance in account_info['balances']}
 
-        # Check if there is enough balance for asset A (quote asset)
-        if balances.get(quote_asset, 0) < quote_asset_funds:
-            raise ValueError(f"Insufficient balance for {quote_asset}. Required: {quote_asset_funds}, Available: {balances.get(quote_asset, 0)}")
+        # Проверка баланса base_asset
+        if base_asset_funds > 0:
+            if balances.get(base_asset, 0) < base_asset_funds:
+                raise ValueError(f"Insufficient balance for {base_asset}. Required: {base_asset_funds}, Available: {balances.get(base_asset, 0)}")
+            logging.info(f"Sufficient balance for {base_asset}")
 
-        # Check if there is enough balance for asset B (base asset)
-        if balances.get(base_asset, 0) < base_asset_funds:
-            raise ValueError(f"Insufficient balance for {base_asset}. Required: {base_asset_funds}, Available: {balances.get(base_asset, 0)}")
-
-        logging.info(f"Sufficient balance for {quote_asset} and {base_asset}.")
+        # Проверка баланса quote_asset только если он указан
+        if quote_asset and quote_asset_funds > 0:
+            if balances.get(quote_asset, 0) < quote_asset_funds:
+                raise ValueError(f"Insufficient balance for {quote_asset}. Required: {quote_asset_funds}, Available: {balances.get(quote_asset, 0)}")
+            logging.info(f"Sufficient balance for {quote_asset}")
 
     async def get_account_balances(self):
         try:

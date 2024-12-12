@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useWebSocket } from '../services/WebSocketMaster';
 import { BotStatus } from './BotStatus';
 import { TradeHistory } from './TradeHistory';
@@ -15,12 +15,19 @@ export const BotDashboard: React.FC<BotDashboardProps> = ({ botId }) => {
     const { subscribe, unsubscribe, lastMessage } = useWebSocket();
     const { addNotification } = useNotifications();
     const lastProcessedNotification = useRef<string | null>(null);
+    const [botType, setBotType] = useState<string | null>(null);
 
     useEffect(() => {
-        // Подписываемся на все необходимые типы данных
+        // Получаем тип бота из статуса
+        const statusKey = `${botId}_status`;
+        if (lastMessage[statusKey]?.initial_parameters?.type) {
+            setBotType(lastMessage[statusKey].initial_parameters.type);
+        }
+    }, [lastMessage, botId]);
+
+    useEffect(() => {
         const subscriptions = [
             'status',
-            'trade_history',
             'active_orders',
             'order_history',
             'price_data',
@@ -29,12 +36,17 @@ export const BotDashboard: React.FC<BotDashboardProps> = ({ botId }) => {
             'notification'
         ];
 
+        // Добавляем подписку на trade_history только если это не sellbot
+        if (botType !== 'sellbot') {
+            subscriptions.push('trade_history');
+        }
+
         subscriptions.forEach(type => subscribe(botId, type));
 
         return () => {
             subscriptions.forEach(type => unsubscribe(botId, type));
         };
-    }, [botId, subscribe, unsubscribe]);
+    }, [botId, botType, subscribe, unsubscribe]);
 
     useEffect(() => {
         if (lastMessage[`${botId}_notification`]) {
@@ -64,7 +76,7 @@ export const BotDashboard: React.FC<BotDashboardProps> = ({ botId }) => {
             <ActiveOrders botId={botId} />
             <div className="flex flex-col">
                 <PriceChart botId={botId} />
-                <TradeHistory botId={botId} />
+                {botType !== 'sellbot' && <TradeHistory botId={botId} />}
             </div>
             <OrderHistory botId={botId} />
         </div>

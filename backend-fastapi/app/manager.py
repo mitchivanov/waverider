@@ -31,23 +31,40 @@ class TradingBotManager:
             if await cls.is_running(bot_id):
                 await cls.stop_bot(bot_id)
             
-            
             parameters['bot_id'] = bot_id
-            
             strategy_class = get_strategy_class(bot_type)
-            strategy = strategy_class(
-                bot_id=bot_id,
-                symbol=parameters['symbol'],
-                api_key=parameters['api_key'],
-                api_secret=parameters['api_secret'],
-                testnet=parameters.get('testnet', True),
-                asset_a_funds=parameters['asset_a_funds'],
-                asset_b_funds=parameters['asset_b_funds'],
-                grids=parameters['grids'],
-                deviation_threshold=parameters['deviation_threshold'],
-                growth_factor=parameters['growth_factor'],
-                use_granular_distribution=parameters['use_granular_distribution']
-            )
+            
+            # Инициализируем параметры в зависимости от типа стратегии
+            if bot_type == 'grid':
+                logging.info(f"Запуск стратегии grid с параметрами: {parameters}")
+                strategy = strategy_class(
+                    bot_id=bot_id,
+                    symbol=parameters['symbol'],
+                    api_key=parameters['api_key'],
+                    api_secret=parameters['api_secret'],
+                    testnet=parameters.get('testnet', True),
+                    asset_a_funds=parameters['asset_a_funds'],
+                    asset_b_funds=parameters['asset_b_funds'],
+                    grids=parameters['grids'],
+                    deviation_threshold=parameters['deviation_threshold'],
+                    growth_factor=parameters['growth_factor'],
+                    use_granular_distribution=parameters['use_granular_distribution']
+                )
+                
+            elif bot_type == 'sellbot':
+                logging.info(f"Запуск стратегии sellbot с параметрами: {parameters}")
+                strategy = strategy_class(
+                    bot_id=bot_id,
+                    api_key=parameters['api_key'],
+                    api_secret=parameters['api_secret'],
+                    min_price=parameters['min_price'],
+                    max_price=parameters['max_price'],
+                    num_levels=parameters['num_levels'],
+                    reset_threshold_pct=parameters['reset_threshold_pct'],
+                    pair=parameters['symbol'],
+                    batch_size=parameters['batch_size'],
+                    testnet=parameters.get('testnet', True)
+                )
             
             asyncio.create_task(strategy.execute_strategy())
             

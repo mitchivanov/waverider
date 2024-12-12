@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { botService } from '../services/api';
-import { GridTradingParameters, AnotherTradingParameters } from '../types';
+import { GridTradingParameters, AnotherTradingParameters, SellBotParameters } from '../types';
 import { GridBotForm } from './GridBotForm';
+import { SellBotForm } from './SellBotForm';
 import { useWebSocket } from '../services/WebSocketMaster';
 
 const defaultGridParams: GridTradingParameters = {
@@ -30,14 +31,28 @@ const defaultAnotherParams: AnotherTradingParameters = {
   testnet: true
 };
 
+const defaultSellBotParams: SellBotParameters = {
+  type: 'sellbot',
+  baseAsset: "BTC",
+  quoteAsset: "USDT",
+  min_price: 90000,
+  max_price: 110000,
+  num_levels: 10,
+  reset_threshold_pct: 2.0,
+  batch_size: 0.001,
+  api_key: '55euYhdLmx17qhTB1KhBSbrsS3A79bYU0C408VHMYsTTMcsyfSMboJ1d1uEWNLq3',
+  api_secret: '2zlWvVVQIrj5ZryMNCkt9KIqowlQQMdG0bcV4g4LAinOnF8lc7O3Udumn6rIAyLb',
+  testnet: true
+};
+
 interface BotControlProps {
   botId: number;
   onBotStarted: (newBotId: number) => void;
 }
 
 export const BotControl: React.FC<BotControlProps> = ({ botId, onBotStarted }) => {
-  const [botType, setBotType] = useState<'grid' | 'another'>('grid');
-  const [params, setParams] = useState<GridTradingParameters | AnotherTradingParameters>(defaultGridParams);
+  const [botType, setBotType] = useState<'grid' | 'sellbot'>('grid');
+  const [params, setParams] = useState<GridTradingParameters | AnotherTradingParameters | SellBotParameters>(defaultGridParams);
   const [isLoading, setIsLoading] = useState(false);
   const [isBotRunning, setIsBotRunning] = useState(false);
   const { lastMessage, subscribe, unsubscribe } = useWebSocket();
@@ -69,24 +84,37 @@ export const BotControl: React.FC<BotControlProps> = ({ botId, onBotStarted }) =
   };
 
   const handleBotTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newType = e.target.value as 'grid' | 'another';
+    const newType = e.target.value as 'grid' | 'sellbot';
     setBotType(newType);
-    setParams(newType === 'grid' ? defaultGridParams : defaultAnotherParams);
+    setParams(newType === 'grid' ? defaultGridParams : defaultSellBotParams);
   };
 
   const handleStart = async () => {
     if (isLoading) return;
     try {
       setIsLoading(true);
+      
+      const baseAsset = botType === 'grid' 
+        ? (params as GridTradingParameters).baseAsset 
+        : (params as SellBotParameters).baseAsset;
+        
+      const quoteAsset = botType === 'grid' 
+        ? (params as GridTradingParameters).quoteAsset 
+        : (params as SellBotParameters).quoteAsset;
+
       const paramsToSend = {
         ...params,
-        symbol: `${(params as GridTradingParameters).baseAsset}${(params as GridTradingParameters).quoteAsset}`
+        symbol: `${baseAsset}${quoteAsset}`
       };
+      
+      console.log('Sending params:', paramsToSend);
+      
       const response = await botService.start(paramsToSend);
       alert('Bot started successfully');
       setIsBotRunning(true);
       onBotStarted(response.data.bot_id);
     } catch (error) {
+      console.error('Error starting bot:', error);
       alert('Error starting the bot');
     } finally {
       setIsLoading(false);
@@ -122,7 +150,7 @@ export const BotControl: React.FC<BotControlProps> = ({ botId, onBotStarted }) =
               disabled={isBotRunning}
             >
               <option value="grid">Grid Trading Bot</option>
-              <option value="another">Another Strategy Bot</option>
+              <option value="sellbot">Sell Bot</option>
             </select>
           </div>
 
@@ -171,9 +199,11 @@ export const BotControl: React.FC<BotControlProps> = ({ botId, onBotStarted }) =
               isBotRunning={isBotRunning}
             />
           ) : (
-            <div className="col-span-2 text-gray-300">
-              The form for another strategy will be available soon.
-            </div>
+            <SellBotForm 
+              params={params as SellBotParameters}
+              handleInputChange={handleInputChange}
+              isBotRunning={isBotRunning}
+            />
           )}
         </div>
 
