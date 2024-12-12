@@ -11,22 +11,16 @@ import {
   Time,
 } from 'lightweight-charts';
 import { ActiveOrder } from '../types';
-import { useWebSocket } from '../services/WebSocketMaster';
 
 const intervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
 const symbol = 'BTCUSDT'; // Или получайте динамически
 
-interface PriceChartProps {
-  botId: number;
-}
-
-export const PriceChart: React.FC<PriceChartProps> = ({ botId }) => {
+export const PriceChart: React.FC<{ botId: number }> = ({ botId }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const [activeOrders, setActiveOrders] = useState<ActiveOrder[]>([]);
   const [selectedInterval, setSelectedInterval] = useState<string>('1m');
-  const { lastMessage, sendMessage } = useWebSocket();
 
   // Ref для хранения ссылок на ценовые линии
   const priceLinesRef = useRef<IPriceLine[]>([]);
@@ -93,61 +87,76 @@ export const PriceChart: React.FC<PriceChartProps> = ({ botId }) => {
   }, []);
 
   useEffect(() => {
-    const historicalKey = `${botId}_historical_kline_data`;
-    const candleKey = `${botId}_kline_data`;
-    const ordersKey = `${botId}_active_orders_data`;
-    const candleUpdateKey = `${botId}_candlestick_update`;
+    // Инициализация WebSocket подключения
+    wsRef.current = new WebSocket("ws://localhost:8000/ws");
 
-    // Обработка исторических данных
-    if (lastMessage[historicalKey]) {
-      const historicalData: CandlestickData[] = lastMessage[historicalKey].data
-        .map((k: any) => ({
-          time: k.time as Time,
-          open: k.open,
-          high: k.high,
-          low: k.low,
-          close: k.close,
-        }))
-        .sort((a: CandlestickData, b: CandlestickData) => 
-          Number(a.time) - Number(b.time)
-        );
-      
-      candlestickSeriesRef.current?.setData(historicalData);
-    }
+    wsRef.current.onopen = () => {
+      console.log('WebSocket подключен');
+      // Отправляем параметры подписки
+      wsRef.current?.send(JSON.stringify({
+        type: "subscribe",
+        symbol: symbol,
+        interval: selectedInterval
+      }));
+    };
 
-    // Обработка обновлений свечей
-    if (lastMessage[candleKey]) {
-      const candleData = lastMessage[candleKey].data;
-      const kline: CandlestickData = {
-        time: candleData.time as Time,
-        open: candleData.open,
-        high: candleData.high,
-        low: candleData.low,
-        close: candleData.close,
-      };
-      candlestickSeriesRef.current?.update(kline);
-    }
+    wsRef.current.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      const type = message.type;
+      const bot_id = message.bot_id;
 
-    // Обработка обновлений свечей реального времени
-    if (lastMessage[candleUpdateKey]) {
-      const candleData = lastMessage[candleUpdateKey].data;
-      const kline: CandlestickData = {
-        time: candleData.time as Time,
-        open: candleData.open,
-        high: candleData.high,
-        low: candleData.low,
-        close: candleData.close,
-      };
-      candlestickSeriesRef.current?.update(kline);
-    }
+      if (type === "historical_kline_data" && bot_id === botId) {
+        const historicalData: CandlestickData[] = message.data
+          .map((k: any) => ({
+            time: k.open_time / 1000,
+            open: k.open,
+            high: k.high,
+            low: k.low,
+            close: k.close,
+          }))
+          .sort((a: CandlestickData, b: CandlestickData) => 
+            Number(a.time) - Number(b.time)
+          )
+          .slice(-100);
+        
+        candlestickSeriesRef.current?.setData(historicalData);
+      }
 
-    // Обработка активных ордеров
-    if (lastMessage[ordersKey] && lastMessage[ordersKey].payload) {
-      const orders = lastMessage[ordersKey].payload;
-      setActiveOrders(orders);
-      updateGridLevels(orders);
-    }
-  }, [lastMessage, botId]);
+      if (type === "active_orders_data") {
+        const orders = message.payload || [];
+        setActiveOrders(orders);
+        updateGridLevels(orders);
+      }
+
+      if (type === "kline_data" || type === "candlestick_update") {
+        const kline: CandlestickData = {
+          time: (type === "kline_data" ? message.data.open_time : message.data.time) / 1000 as Time,
+          open: message.data.open,
+          high: message.data.high,
+          low: message.data.low,
+          close: message.data.close,
+        };
+        
+        try {
+          candlestickSeriesRef.current?.update(kline);
+        } catch (error) {
+          console.warn('Ошибка при обновлении данных свечи:', error);
+        }
+      }
+    };
+
+    wsRef.current.onclose = () => {
+      console.log('WebSocket отключен');
+    };
+
+    wsRef.current.onerror = (error) => {
+      console.error('WebSocket ошибка:', error);
+    };
+
+    return () => {
+      wsRef.current?.close();
+    };
+  }, [selectedInterval, botId]);
 
   const updateGridLevels = (orders: ActiveOrder[]) => {
     if (!candlestickSeriesRef.current) return;
@@ -181,16 +190,13 @@ export const PriceChart: React.FC<PriceChartProps> = ({ botId }) => {
 
   const handleIntervalChange = (interval: string) => {
     setSelectedInterval(interval);
-    // Используем общий WebSocket
-    const message = {
+    // Отправляем сообщение на сервер для изменения интервала
+    wsRef.current?.send(JSON.stringify({
       type: "change_interval",
-      botId: botId, // Добавляем botId
-      interval: interval,
-      symbol: symbol
-    };
-    // Используем sendMessage из WebSocket контекста
-    sendMessage(message);
+      interval: interval
+    }));
   };
+
   return (
     <div>
       <div className="interval-buttons" style={{ marginBottom: '10px' }}>

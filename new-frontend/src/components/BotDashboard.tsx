@@ -31,6 +31,9 @@ export const BotDashboard: React.FC<BotDashboardProps> = ({ botId }) => {
             'active_orders',
             'order_history',
             'price_data',
+            'historical_kline_data',
+            'kline_data',
+            'candlestick_update',
             'candlestick_data',
             'candlestick_1m',
             'notification'

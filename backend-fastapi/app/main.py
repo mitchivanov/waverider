@@ -52,7 +52,8 @@ app.add_middleware(
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # Хранилище KlineManager по WebSocket соединениям
@@ -189,8 +190,15 @@ manager = ConnectionManager()
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     try:
-        connection_id = id(websocket)
+        # Добавляем проверку origin
+        origin = websocket.headers.get('origin', '')
+        ws_logger.info(f"Incoming WebSocket connection from origin: {origin}")
+        
+        # Явно принимаем соединение перед manager.connect
+        await websocket.accept()
         await manager.connect(websocket)
+        
+        connection_id = id(websocket)
         ws_logger.info(f"WebSocket подключен: {websocket.client}")
         
         while True:
@@ -496,17 +504,18 @@ async def trade_history_service(bot_id: int):
 
 async def candle_data_service(bot_id: int):
     async with async_session() as session:
-        try:
-            ws_logger.debug(f"candle_data_service: bot_id = {bot_id}")
-            
-            bot = await TradingBotManager.get_bot_by_id(bot_id)
-            
-            if bot_id not in kline_managers:
-                kline_managers[bot_id] = KlineManager(symbol=bot.symbol, interval="1m")
+        while True:
+            try:
+                ws_logger.debug(f"candle_data_service: bot_id = {bot_id}")
+                
+                bot = await TradingBotManager.get_bot_by_id(bot_id)
+                
+                if bot_id not in kline_managers:
+                    kline_managers[bot_id] = KlineManager(symbol=bot.symbol, interval="1m")
              
-            historical_klines = await kline_managers[bot_id].fetch_kline_data(limit=100)
-            if historical_klines:
-                historical_message = {
+                historical_klines = await kline_managers[bot_id].fetch_kline_data(limit=100)
+                if historical_klines:
+                    historical_message = {
                     "type": "historical_kline_data",
                     "bot_id": bot_id,
                     "symbol": bot.symbol,
@@ -514,26 +523,26 @@ async def candle_data_service(bot_id: int):
                 }
                 await manager.broadcast(historical_message)
                 
-            last_candle_time = None
-            ohlc = {
-                "open": 0.0,
-                "high": 0.0,
-                "low": float('inf'),
-                "close": 0.0,
-                "volume": 0.0
-            }
-            candle_interval = 15
+                last_candle_time = None
+                ohlc = {
+                    "open": 0.0,
+                    "high": 0.0,
+                    "low": float('inf'),
+                    "close": 0.0,
+                    "volume": 0.0
+                }
+                candle_interval = 15
 
-            while True:
-                try:
-                    ws_logger.debug(f"candle_data_service: bot_id = {bot_id}")
-                except Exception as e:
-                    ws_logger.error(f"Ошибка при отправке candle_data: {e}")
-                    await asyncio.sleep(5)
+            #while True:
+            #    try:
+            #        ws_logger.debug(f"candle_data_service: bot_id = {bot_id}")
+            #    except Exception as e:
+            #        ws_logger.error(f"Ошибка при отправке candle_data: {e}")
+            #        await asyncio.sleep(5)
                     
-        except Exception as e:
-            ws_logger.error(f"Ошибка при отправке candle_data_: {e}")
-            await asyncio.sleep(5)
+            except Exception as e:
+                ws_logger.error(f"Ошибка при отправке candle_data_: {e}")
+                await asyncio.sleep(5)
 
 @app.post("/api/balance")
 async def get_balance(params: dict):

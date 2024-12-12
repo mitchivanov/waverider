@@ -91,8 +91,6 @@ class GridStrategy(BaseStrategy):
 
         # Check account balance
         self.check_account_balance()
-        
-        self.sync_orders_with_binance()
 
         # После существующих инициализаций
         self.start_time = datetime.datetime.now()
@@ -101,7 +99,7 @@ class GridStrategy(BaseStrategy):
         self.trades_logger = AsyncLogger(bot_id)
         
 
-        
+        asyncio.create_task(self.sync_orders_with_binance())
         # Инициализируем текущую цену
         asyncio.create_task(self.update_current_price_and_balance())
 
