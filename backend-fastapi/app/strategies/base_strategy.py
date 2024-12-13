@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
-import logging
 from typing import Dict, Any
-import asyncio
+import asyncio 
 
 class BaseStrategy(ABC):
     def __init__(self, bot_id: int, symbol: str, api_key: str, api_secret: str, testnet: bool = True):

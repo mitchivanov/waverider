@@ -1,25 +1,28 @@
+# Стандартные библиотеки Python
 import asyncio
+import datetime
+import decimal
 import logging
-from binance_client import BinanceClient
+import os
+import time
+
+# Сторонние библиотеки
+import aiofiles
 import aiohttp
 from asyncio_throttle import Throttler
-from binance_websocket import BinanceWebSocket
-import os
-import decimal
-import time
-from sqlalchemy import delete, update, or_
-import datetime
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import declarative_base
 from sqlalchemy.future import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from database import async_session
-from models.models import TradeHistory, ActiveOrder, OrderHistory
-from sqlalchemy import update
-import aiofiles
-from strategies.base_strategy import BaseStrategy
-from strategies.logger import AsyncLogger
-from notifications import NotificationManager
+from sqlalchemy.orm import declarative_base
+
+# Локальные импорты
+from app.binance_client import BinanceClient
+from app.binance_websocket import BinanceWebSocket
+from app.database import async_session
+from app.models.models import ActiveOrder, OrderHistory, TradeHistory
+from app.notifications import NotificationManager
+from app.strategies.base_strategy import BaseStrategy
+from app.strategies.logger import AsyncLogger
 
 # Configure logging for the entire application
 logging.basicConfig(
@@ -104,7 +107,6 @@ class GridStrategy(BaseStrategy):
         asyncio.create_task(self.update_current_price_and_balance())
 
     async def update_current_price_and_balance(self):
-        session = None  # Отдельная сессия для этого модуля
         while True:
             try:
                 if session is None:
@@ -120,7 +122,6 @@ class GridStrategy(BaseStrategy):
                         try:
                             self.current_price = await self.binance_client.get_current_price_async(
                                 self.symbol, 
-                                session=session  # Используем выделенную сессию
                             )
                             break
                         except Exception as e:
@@ -1538,59 +1539,61 @@ class GridStrategy(BaseStrategy):
         Synchronizes local orders with Binance orders.
         Recreates missing orders and updates related trades.
         """
-        try:
-            await self.trades_logger.log("Syncing orders with Binance...")
-            # Get all open orders from Binance
-            binance_orders = await self.binance_client.get_open_orders_async(self.symbol)
-            binance_order_ids = {str(order['orderId']) for order in binance_orders}
+        
+        while True:
+            try:
+                await self.trades_logger.log("Syncing orders with Binance...")
+                # Get all open orders from Binance
+                binance_orders = await self.binance_client.get_open_orders_async(self.symbol)
+                binance_order_ids = {str(order['orderId']) for order in binance_orders}
 
-            # Get our local orders
-            async with async_session() as session:
-                result = await session.execute(
-                    select(ActiveOrder).where(ActiveOrder.bot_id == self.bot_id)
-                )
-                local_orders = result.scalars().all()
-
-            # Check each local order
-            for local_order in local_orders:
-                if str(local_order.order_id) not in binance_order_ids:
-                    await self.trades_logger.log(f"Order {local_order.order_id} not found on Binance. Recreating...")
-
-                    # Get related trade
+                # Get our local orders
+                async with async_session() as session:
                     result = await session.execute(
-                        select(TradeHistory).where(
-                            or_(
+                        select(ActiveOrder).where(ActiveOrder.bot_id == self.bot_id)
+                    )
+                    local_orders = result.scalars().all()
+
+                # Check each local order
+                for local_order in local_orders:
+                    if str(local_order.order_id) not in binance_order_ids:
+                        await self.trades_logger.log(f"Order {local_order.order_id} not found on Binance. Recreating...")
+
+                        # Get related trade
+                        result = await session.execute(
+                            select(TradeHistory).where(
+                                or_(
                                 TradeHistory.buy_order_id == local_order.order_id,
                                 TradeHistory.sell_order_id == local_order.order_id
                             ),
-                            TradeHistory.status == 'OPEN'
-                        )
-                    )
-                    trade = result.scalar_one_or_none()
+                                TradeHistory.status == 'OPEN'
+                                )   
+                            )
+                        trade = result.scalar_one_or_none()
 
-                    if trade:
-                        # Create new order with the same parameters
-                        new_order = await self.binance_client.place_order_async(
-                            symbol=self.symbol,
-                            side=local_order.order_type.upper(),
-                            quantity=local_order.quantity,
-                            price=local_order.price
-                        )
+                        if trade:
+                            # Create new order with the same parameters
+                            new_order = await self.binance_client.place_order_async(
+                                symbol=self.symbol,
+                                side=local_order.order_type.upper(),
+                                quantity=local_order.quantity,
+                                price=local_order.price
+                            )
 
-                        if new_order and 'orderId' in new_order:
-                            # Update order ID in trade
-                            if trade.buy_order_id == local_order.order_id:
-                                await session.execute(
-                                    update(TradeHistory)
-                                    .where(TradeHistory.id == trade.id)
-                                    .values(buy_order_id=str(new_order['orderId']))
-                                )
-                            else:
-                                await session.execute(
-                                    update(TradeHistory)
-                                    .where(TradeHistory.id == trade.id)
-                                    .values(sell_order_id=str(new_order['orderId']))
-                                )
+                            if new_order and 'orderId' in new_order:
+                                # Update order ID in trade
+                                if trade.buy_order_id == local_order.order_id:
+                                    await session.execute(
+                                        update(TradeHistory)
+                                        .where(TradeHistory.id == trade.id)
+                                        .values(buy_order_id=str(new_order['orderId']))
+                                    )
+                                else:
+                                    await session.execute(
+                                        update(TradeHistory)
+                                        .where(TradeHistory.id == trade.id)
+                                        .values(sell_order_id=str(new_order['orderId']))
+                                    )
 
                             # Delete old order from DB
                             await session.execute(
@@ -1613,8 +1616,8 @@ class GridStrategy(BaseStrategy):
                         else:
                             await self.trades_logger.error(f"Failed to recreate order {local_order.order_id}")
 
-        except Exception as e:
-            await self.trades_logger.error(f"Error in sync_orders_with_binance: {e}")
+            except Exception as e:
+                await self.trades_logger.error(f"Error in sync_orders_with_binance: {e}")
 
 async def start_grid_strategy(parameters: dict) -> GridStrategy:
     """

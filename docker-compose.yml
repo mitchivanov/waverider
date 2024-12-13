@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  frontend:
+    build: 
+      context: ./new-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+  backend:
+    build: 
+      context: ./backend-fastapi
+    expose:
+      - "8000"
+    volumes:
+      - ./backend-fastapi/app:/app/app
+      - sqlite_data:/app/app/data
+      - ./logs:/app/logs
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  sqlite_data:
+  logs:

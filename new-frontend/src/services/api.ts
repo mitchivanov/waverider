@@ -5,7 +5,7 @@ const api = axios.create({
   baseURL: '/api'
 });
 
-const WS_URL = `ws://https://1d93-2a02-2698-6c2e-cd71-b5bc-cb6-845f-620e.ngrok-free.app//ws`;
+const WS_URL = `ws://${window.location.host}/ws`;
 
 export const botService = {
   start: (params: TradingParameters) => api.post('/bot/start', params),

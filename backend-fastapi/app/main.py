@@ -2,28 +2,28 @@ import asyncio
 import datetime
 import json
 import logging
+import signal
+import sys
 import uvicorn
-from database import async_session, init_db
-from binance_client import BinanceClient
-from fastapi import FastAPI, APIRouter, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-#from strategies.otherstrat import OtherStrategy  # Импорт других стратегий
-from kline_manager import KlineManager
-from manager import TradingBotManager
-from models.models import (
+from app.database import async_session, init_db
+from app.binance_client import BinanceClient
+from app.kline_manager import KlineManager
+from app.manager import TradingBotManager
+from app.models.models import (
     BaseBot, 
     GridBotConfig, 
     ActiveOrder, 
     TradeHistory, 
     OrderHistory
 )
+from app.notifications import NotificationManager
+from fastapi import FastAPI, APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import delete, func, update
 from sqlalchemy.future import select
 from starlette.websockets import WebSocketState
 from typing import Dict, List, Set, Optional, Callable, Union
-import signal
-import sys
-from notifications import NotificationManager
+
 
 # Отключаем ненужные логи
 logging.getLogger('websockets').setLevel(logging.ERROR)
@@ -49,11 +49,12 @@ app.include_router(router)
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000",
+                   "http://localhost:5173",
+                   "http://185.41.161.201"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"]
+    allow_headers=["*"]
 )
 
 # Хранилище KlineManager по WebSocket соединениям
@@ -190,15 +191,8 @@ manager = ConnectionManager()
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     try:
-        # Добавляем проверку origin
-        origin = websocket.headers.get('origin', '')
-        ws_logger.info(f"Incoming WebSocket connection from origin: {origin}")
-        
-        # Явно принимаем соединение перед manager.connect
-        await websocket.accept()
-        await manager.connect(websocket)
-        
         connection_id = id(websocket)
+        await manager.connect(websocket)
         ws_logger.info(f"WebSocket подключен: {websocket.client}")
         
         while True:
@@ -230,9 +224,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif msg_type == "trade_history":
                     task = asyncio.create_task(trade_history_service(bot_id))
                 elif msg_type == "candlestick_data":
-                    task = asyncio.create_task(candle_data_service(bot_id))
-                #elif msg_type == "candlestick_1m":
-                    #task = asyncio.create_task(candlestick_1m_service(bot_id))
+                    task = asyncio.create_task(candle_data_service(bot_id, websocket))
                 else:
                     continue
 
@@ -502,20 +494,29 @@ async def trade_history_service(bot_id: int):
                 await asyncio.sleep(5)
                 
 
-async def candle_data_service(bot_id: int):
+async def candle_data_service(bot_id: int, websocket: WebSocket):
     async with async_session() as session:
-        while True:
-            try:
-                ws_logger.debug(f"candle_data_service: bot_id = {bot_id}")
-                
-                bot = await TradingBotManager.get_bot_by_id(bot_id)
-                
-                if bot_id not in kline_managers:
-                    kline_managers[bot_id] = KlineManager(symbol=bot.symbol, interval="1m")
+        try:
+            ws_logger.debug(f"candle_data_service: bot_id = {bot_id}")
+            
+            bot = await TradingBotManager.get_bot_by_id(bot_id)
+            interval = "1m"
+            
+            async def broadcast_kline(kline: dict):
+                message = {
+                    "type": "kline_data",
+                    "bot_id": bot_id,
+                    "symbol": bot.symbol,
+                    "data": kline
+                }
+                await manager.broadcast(message)
+            
+            if bot_id not in kline_managers:
+                kline_managers[bot_id] = KlineManager(symbol=bot.symbol, interval=interval)
              
-                historical_klines = await kline_managers[bot_id].fetch_kline_data(limit=100)
-                if historical_klines:
-                    historical_message = {
+            historical_klines = await kline_managers[bot_id].fetch_kline_data(limit=100)
+            if historical_klines:
+                historical_message = {
                     "type": "historical_kline_data",
                     "bot_id": bot_id,
                     "symbol": bot.symbol,
@@ -523,26 +524,90 @@ async def candle_data_service(bot_id: int):
                 }
                 await manager.broadcast(historical_message)
                 
-                last_candle_time = None
-                ohlc = {
-                    "open": 0.0,
-                    "high": 0.0,
-                    "low": float('inf'),
-                    "close": 0.0,
-                    "volume": 0.0
-                }
-                candle_interval = 15
-
-            #while True:
-            #    try:
-            #        ws_logger.debug(f"candle_data_service: bot_id = {bot_id}")
-            #    except Exception as e:
-            #        ws_logger.error(f"Ошибка при отправке candle_data: {e}")
-            #        await asyncio.sleep(5)
+            last_candle_time = None
+            ohlc = {
+                "open": 0.0,
+                "high": 0.0,
+                "low": 0.0,
+                "close": 0.0,
+                "volume": 0.0
+            }
+            candle_interval = 15
+            
+            while True:
+                try:
+                    subscription_message = await websocket.receive_json()
+                    if subscription_message.get("type") == "change_interval":
+                        new_interval = subscription_message.get("interval")
+                        if new_interval and new_interval != interval:
+                            interval = new_interval
+                            
+                            await kline_managers[bot_id].stop()
+                            kline_tasks[bot_id].cancel()
+                            
+                            kline_managers[bot_id] = KlineManager(symbol=bot.symbol, interval=interval)
+                            kline_tasks[bot_id] = asyncio.create_task(kline_managers[bot_id].start(broadcast_kline))
+                            
+                            historical_klines = await kline_managers[bot_id].fetch_kline_data(limit=100)
+                            if historical_klines:
+                                historical_message = {
+                                    "type": "historical_kline_data",
+                                    "bot_id": bot_id,
+                                    "symbol": bot.symbol,
+                                    "data": historical_klines
+                                }
+                                await manager.broadcast(historical_message)
+                            
+                        ws_logger.info(f"Интервал изменен на {interval} для бота {bot_id}")
+                        
+                    parameters = await TradingBotManager.get_current_parameters(bot_id)
+                    if parameters is None:
+                        await asyncio.sleep(1)
+                        continue
                     
-            except Exception as e:
-                ws_logger.error(f"Ошибка при отправке candle_data_: {e}")
-                await asyncio.sleep(5)
+                    current_timestamp = int(datetime.datetime.utcnow().timestamp())
+                    candle_time = current_timestamp - (current_timestamp % candle_interval)
+                    
+                    if candle_time > last_candle_time:
+                        candle_data = {
+                            "type": "candlestick_update",
+                            "bot_id": bot_id,
+                            "data": {
+                                "time": last_candle_time,
+                                "open": ohlc["open"],
+                                "high": ohlc["high"],
+                                "low": ohlc["low"],
+                                "close": ohlc["close"],
+                                "volume": ohlc["volume"]
+                            }
+                        }
+                        await manager.broadcast(candle_data)
+                        ws_logger.debug(f"Отправлено candle_data: {json.dumps(candle_data)}")
+                        
+                        # Сброс OHLV для новой свечи
+                        ohlc = {
+                            "open": parameters["current_price"],
+                            "high": parameters["current_price"],
+                            "low": parameters["current_price"],
+                            "close": parameters["current_price"],
+                            "volume": 0.0  # Добавьте реализацию объема, если необходимо
+                        }
+                        last_candle_time = candle_time
+                    else:
+                        # Обновление текущей свечи
+                        ohlc["close"] = parameters["current_price"]
+                        ohlc["high"] = max(ohlc["high"], parameters["current_price"])
+                        ohlc["low"] = min(ohlc["low"], parameters["current_price"])
+                        
+                except Exception as e:
+                    ws_logger.error(f"Ошибка при отправке candle_data_: {e}")
+                    await asyncio.sleep(5)
+
+                    
+        except Exception as e:
+            ws_logger.error(f"Ошибка при отправке candle_data_: {e}")
+            await asyncio.sleep(5)
+
 
 @app.post("/api/balance")
 async def get_balance(params: dict):
@@ -595,4 +660,3 @@ async def attempt_reconnect(websocket, max_retries=3, initial_delay=1):
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-

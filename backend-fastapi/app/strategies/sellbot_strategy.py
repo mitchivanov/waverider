@@ -1,16 +1,21 @@
-import time
-import math
-from binance.client import Client
-from binance.enums import SIDE_SELL, ORDER_TYPE_LIMIT, TIME_IN_FORCE_GTC
-from strategies.base_strategy import BaseStrategy
-from database import async_session
-from models.models import TradeHistory, ActiveOrder, OrderHistory
+# Стандартные библиотеки Python
+import asyncio
 import datetime
 import logging
-from sqlalchemy.future import select
+import math
+import time
+
+# Сторонние библиотеки
+from binance.client import Client
+from binance.enums import SIDE_SELL, ORDER_TYPE_LIMIT, TIME_IN_FORCE_GTC
 from sqlalchemy import delete, update
-from strategies.logger import AsyncLogger
-import asyncio
+from sqlalchemy.future import select
+
+# Локальные импорты
+from app.models.models import TradeHistory, ActiveOrder, OrderHistory
+from app.strategies.logger import AsyncLogger
+from app.database import async_session
+from app.strategies.base_strategy import BaseStrategy
 
 class SellBot(BaseStrategy):
     def __init__(self, bot_id, api_key, api_secret, min_price, max_price, num_levels, reset_threshold_pct, pair, batch_size, testnet=True):

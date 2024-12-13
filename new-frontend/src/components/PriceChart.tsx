@@ -10,10 +10,14 @@ import {
   LineStyle,
   Time,
 } from 'lightweight-charts';
-import { ActiveOrder } from '../types';
+import { ActiveOrder, OrderHistory } from '../types';
 
 const intervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
-const symbol = 'BTCUSDT'; // Или получайте динамически
+
+interface OrderLine {
+  orderId: string;
+  series: ISeriesApi<'Line'>;
+}
 
 export const PriceChart: React.FC<{ botId: number }> = ({ botId }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -23,7 +27,7 @@ export const PriceChart: React.FC<{ botId: number }> = ({ botId }) => {
   const [selectedInterval, setSelectedInterval] = useState<string>('1m');
 
   // Ref для хранения ссылок на ценовые линии
-  const priceLinesRef = useRef<IPriceLine[]>([]);
+  const priceLinesRef = useRef<OrderLine[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -95,7 +99,7 @@ export const PriceChart: React.FC<{ botId: number }> = ({ botId }) => {
       // Отправляем параметры подписки
       wsRef.current?.send(JSON.stringify({
         type: "subscribe",
-        symbol: symbol,
+        bot_id: botId,
         interval: selectedInterval
       }));
     };
@@ -122,13 +126,8 @@ export const PriceChart: React.FC<{ botId: number }> = ({ botId }) => {
         candlestickSeriesRef.current?.setData(historicalData);
       }
 
-      if (type === "active_orders_data") {
-        const orders = message.payload || [];
-        setActiveOrders(orders);
-        updateGridLevels(orders);
-      }
-
-      if (type === "kline_data" || type === "candlestick_update") {
+      // Обрабатываем только новые свечи
+      if ((type === "kline_data" || type === "candlestick_update") && bot_id === botId) {
         const kline: CandlestickData = {
           time: (type === "kline_data" ? message.data.open_time : message.data.time) / 1000 as Time,
           open: message.data.open,
@@ -141,6 +140,29 @@ export const PriceChart: React.FC<{ botId: number }> = ({ botId }) => {
           candlestickSeriesRef.current?.update(kline);
         } catch (error) {
           console.warn('Ошибка при обновлении данных свечи:', error);
+        }
+      }
+
+      // Обрабатываем историю ордеров только один раз при получении
+      if (type === "order_history_data" && bot_id === botId) {
+        const orders = message.payload || [];
+        const mappedOrders = orders.map((order: OrderHistory) => ({
+          order_id: order.order_id,
+          order_type: order.order_type as 'buy' | 'sell',
+          isInitial: order.isInitial,
+          price: order.price,
+          quantity: order.quantity,
+          created_at: order.created_at
+        }));
+        updateGridLevels(mappedOrders);
+      }
+
+      // Обрабатываем только изменения в активных ордерах
+      if (type === "active_orders_data" && bot_id === botId) {
+        const orders = message.payload || [];
+        if (JSON.stringify(orders) !== JSON.stringify(activeOrders)) {
+          setActiveOrders(orders);
+          updateGridLevels(orders);
         }
       }
     };
@@ -159,33 +181,70 @@ export const PriceChart: React.FC<{ botId: number }> = ({ botId }) => {
   }, [selectedInterval, botId]);
 
   const updateGridLevels = (orders: ActiveOrder[]) => {
-    if (!candlestickSeriesRef.current) return;
+    if (!candlestickSeriesRef.current || !chartRef.current) return;
 
-    // Удаляем существующие ценовые линии
-    priceLinesRef.current.forEach((line) => {
-      candlestickSeriesRef.current?.removePriceLine(line);
-    });
-    // Очищаем массив ценовых линий
-    priceLinesRef.current = [];
+    const existingOrderIds = new Set(priceLinesRef.current.map(line => line.orderId));
+    const currentOrderIds = new Set(orders.map(order => order.order_id));
 
-    // Добавляем новые уровни сетки на основе активных ордеров
-    orders.forEach((order) => {
-      const priceLineOptions: PriceLineOptions = {
-        price: order.price,
-        color: order.order_type === 'buy' ? '#4caf50' : '#f44336',
-        lineWidth: 1,
-        lineStyle: LineStyle.Dotted,
-        axisLabelVisible: true,
-        title: `${order.order_type === 'buy' ? 'BUY' : 'SELL'} @ ${order.price}`,
-        lineVisible: true,
-        axisLabelColor: '#ffffff',
-        axisLabelTextColor: '#ffffff',
-      };
-      const priceLine = candlestickSeriesRef.current?.createPriceLine(priceLineOptions);
-      if (priceLine) {
-        priceLinesRef.current.push(priceLine);
+    // Проверяем, есть ли изменения
+    let hasChanges = false;
+
+    // Проверяем удаленные ордера
+    priceLinesRef.current.forEach(line => {
+      if (!currentOrderIds.has(line.orderId)) {
+        chartRef.current?.removeSeries(line.series);
+        hasChanges = true;
       }
     });
+
+    // Обновляем массив только если были удаления
+    if (hasChanges) {
+      priceLinesRef.current = priceLinesRef.current.filter(line => 
+        currentOrderIds.has(line.orderId)
+      );
+    }
+
+    // Добавляем только новые ордера
+    orders.forEach((order) => {
+      if (!existingOrderIds.has(order.order_id)) {
+        const orderSeries = chartRef.current?.addLineSeries({
+          color: order.order_type === 'buy' ? '#4CAF50' : '#FF5252',
+          lineWidth: 1,
+          lineStyle: LineStyle.Dotted,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+
+        if (orderSeries) {
+          orderSeries.setData([
+            { 
+              time: (new Date(order.created_at).getTime() / 1000) - 3600 as Time,
+              value: order.price 
+            },
+            { 
+              time: new Date(order.created_at).getTime() / 1000 as Time,
+              value: order.price 
+            }
+          ]);
+
+          orderSeries.setMarkers([{
+            time: new Date(order.created_at).getTime() / 1000 as Time,
+            position: 'inBar',
+            color: order.order_type === 'buy' ? '#4CAF50' : '#FF5252',
+            shape: 'circle',
+            text: `${order.order_type.toUpperCase()} ${order.isInitial ? '(Initial)' : ''} @ $${order.price.toFixed(2)}`,
+          }]);
+
+          priceLinesRef.current.push({
+            orderId: order.order_id,
+            series: orderSeries
+          });
+          hasChanges = true;
+        }
+      }
+    });
+
   };
 
   const handleIntervalChange = (interval: string) => {

@@ -4,9 +4,12 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from typing import AsyncGenerator
 
-# Получаем абсолютный путь к текущему файлу и создаем путь к базе данных
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE_URL = f"sqlite+aiosqlite:///{os.path.join(BASE_DIR, 'trading_bot.db')}"
+# Создаем директорию для данных если её нет
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Путь к базе данных в томе Docker
+DATABASE_URL = f"sqlite+aiosqlite:///{os.path.join(DATA_DIR, 'trading_bot.db')}"
 
 engine = create_async_engine(DATABASE_URL)
 async_session = sessionmaker(

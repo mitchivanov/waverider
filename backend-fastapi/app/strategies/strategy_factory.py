@@ -1,8 +1,8 @@
 # backend-fastapi/app/strategies/strategy_factory.py
 from typing import Type
-from .base_strategy import BaseStrategy
-from .gridstrat import GridStrategy
-from .sellbot_strategy import SellBot
+from app.strategies.base_strategy import BaseStrategy
+from app.strategies.gridstrat import GridStrategy
+from app.strategies.sellbot_strategy import SellBot
 
 def get_strategy_class(strategy_type: str) -> Type[BaseStrategy]:
     strategies = {

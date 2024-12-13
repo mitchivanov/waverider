@@ -2,8 +2,8 @@ import asyncio
 import logging
 import aiohttp
 from typing import Optional, Callable, List
-from models.models import TradeHistory, ActiveOrder
-from manager import TradingBotManager
+from app.models.models import TradeHistory, ActiveOrder
+from app.manager import TradingBotManager
 
 class KlineManager:
     """Модуль для получения данных Kline с Binance и передачи их через WebSocket."""

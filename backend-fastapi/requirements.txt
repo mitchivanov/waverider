@@ -8,3 +8,4 @@ channels
 asgiref
 sqlalchemy
 aiosqlite
+aiofiles
