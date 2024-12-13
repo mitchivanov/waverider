@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+SQLModel
+asyncio-throttle
+python-binance
+aiohttp
+channels
+asgiref
+sqlalchemy
+aiosqlite
+aiofiles
