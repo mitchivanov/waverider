@@ -299,7 +299,6 @@ class GridStrategy(BaseStrategy):
                 # Perform a balance check before placing the order
                 if not self.is_balance_sufficient(order_type, price, order_size):
                     await self.trades_logger.error(f"Insufficient balance to place {order_type.upper()} order at ${price} for {order_size} units.")
-                    await self.cancel_all_orders_async(self.bot_id)
                     return
 
                 # Retrieve exchange info
@@ -920,8 +919,7 @@ class GridStrategy(BaseStrategy):
     async def is_balance_sufficient(self, order_type, price, quantity):
         """Check if there is sufficient balance to place the order."""
         try:
-            # Получаем информацию об аккаунте
-            account_info = self.binance_client.client.get_account()
+            account_info = await self.binance_client.get_account_async()
             
             # Создаем словари для free и total балансов
             free_balances = {}
@@ -932,18 +930,9 @@ class GridStrategy(BaseStrategy):
                 free_balances[asset] = float(balance['free'])
                 total_balances[asset] = float(balance['free']) + float(balance['locked'])
 
-            quote_asset = self.symbol[-4:]  # e.g., 'USDT'
-            base_asset = self.symbol[:-4]   # e.g., 'BTC'
-
-            # Логируем балансы обоих активов
-            await self.trades_logger.log(
-                f"Asset balances:\n"
-                f"{base_asset}: Free={free_balances.get(base_asset, 0):.8f}, "
-                f"Total={total_balances.get(base_asset, 0):.8f}\n"
-                f"{quote_asset}: Free={free_balances.get(quote_asset, 0):.8f}, "
-                f"Total={total_balances.get(quote_asset, 0):.8f}"
-            )
-
+            quote_asset = self.symbol[-4:]
+            base_asset = self.symbol[:-4]
+            
             if order_type.lower() == 'buy':
                 required_quote = price * quantity
                 available_quote = free_balances.get(quote_asset, 0)
@@ -955,16 +944,23 @@ class GridStrategy(BaseStrategy):
                         f"Available (Free): {available_quote:.8f}, "
                         f"Total: {total_balances.get(quote_asset, 0):.8f}"
                     )
+                    
+                    notification_data = {
+                        "type": "insufficient_balance",
+                        "bot_id": self.bot_id,
+                        "payload": {
+                            "asset": quote_asset,
+                            "required": required_quote,
+                            "available": available_quote,
+                            "total": total_balances.get(quote_asset, 0),
+                            "order_type": "buy"
+                        }
+                    }
+                    await NotificationManager.send_notification(notification_data)
                     return False
                 else:
-                    await self.trades_logger.log(
-                        f"Sufficient balance for {quote_asset}. "
-                        f"Required: {required_quote:.8f}, "
-                        f"Available (Free): {available_quote:.8f}, "
-                        f"Total: {total_balances.get(quote_asset, 0):.8f}"
-                    )
                     return True
-
+                    
             elif order_type.lower() == 'sell':
                 required_base = quantity
                 available_base = free_balances.get(base_asset, 0)
@@ -976,19 +972,28 @@ class GridStrategy(BaseStrategy):
                         f"Available (Free): {available_base:.8f}, "
                         f"Total: {total_balances.get(base_asset, 0):.8f}"
                     )
+                    
+                    notification_data = {
+                        "type": "insufficient_balance",
+                        "bot_id": self.bot_id,
+                        "payload": {
+                            "asset": base_asset,
+                            "required": required_base,
+                            "available": available_base,
+                            "total": total_balances.get(base_asset, 0),
+                            "order_type": "sell"
+                        }
+                    }
+                    await NotificationManager.send_notification(notification_data)
                     return False
                 else:
-                    await self.trades_logger.log(
-                        f"Sufficient balance for {base_asset}. "
-                        f"Required: {required_base:.8f}, "
-                        f"Available (Free): {available_base:.8f}, "
-                        f"Total: {total_balances.get(base_asset, 0):.8f}"
-                    )
                     return True
+
+            return True
 
         except Exception as e:
             await self.trades_logger.error(f"Error checking balance: {e}")
-            return True  # Allow the exchange to handle insufficient balance
+            return True
 
     async def check_open_trades(self):
         """Periodically check if the second leg of each open trade has been executed."""

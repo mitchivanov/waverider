@@ -12,19 +12,19 @@ export const LoginForm: React.FC = () => {
     
     const success = await login(password);
     if (!success) {
-      setError('Неверный пароль');
+      setError('Invalid password');
     }
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-almostGray">
       <div className="bg-almostBlack p-8 rounded-lg shadow-lg w-full max-w-md">
-        <h2 className="text-2xl font-bold text-white mb-6 text-center">Вход в систему</h2>
+        <h2 className="text-2xl font-bold text-white mb-6 text-center">Authentication</h2>
         
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
             <label htmlFor="password" className="block text-sm font-medium text-gray-300">
-              Пароль
+              Password
             </label>
             <input
               type="password"
@@ -44,7 +44,7 @@ export const LoginForm: React.FC = () => {
             type="submit"
             className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
           >
-            Войти
+            Login
           </button>
         </form>
       </div>

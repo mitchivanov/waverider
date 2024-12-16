@@ -19,8 +19,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (password: string): Promise<boolean> => {
-    // Здесь можно добавить вызов API для проверки пароля
-    const correctPassword = 'Binance12345'; // Замените на реальный пароль или API-вызов
+    
+    const correctPassword = 'Binance12345';
     
     if (password === correctPassword) {
       localStorage.setItem('auth_token', 'authenticated');
