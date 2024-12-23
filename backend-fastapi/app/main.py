@@ -106,7 +106,39 @@ async def start_bot(params: dict):
                     base_asset_funds=base_asset_funds
                 )
                 
+            elif params['type'] == 'indexfund':
                 
+                # Проверяем наличие необходимых параметров для индексного фонда
+                required_params = [
+                    'symbol', 'api_key', 'api_secret', 'asset_a_funds', 
+                    'asset_b_funds', 'grids', 'deviation_threshold',
+                    'growth_factor', 'use_granular_distribution',
+                    'index_deviation_threshold', 'baseAsset', 'quoteAsset'
+                ]
+                
+                for param in required_params:
+                    if param not in params:
+                        logging.error(f"Отсутствует обязательный параметр: {param}")
+                        raise ValueError(f"Missing required parameter: {param}")
+                
+                base_asset = params.get('baseAsset')
+                quote_asset = params.get('quoteAsset')
+                base_asset_funds = params.get('asset_b_funds')
+                quote_asset_funds = params.get('asset_a_funds')
+
+                binance_client = BinanceClient(
+                    api_key=params['api_key'],
+                    api_secret=params['api_secret'],
+                    testnet=params.get('testnet')
+                )
+                
+                # Проверяем достаточность средств
+                await binance_client.is_balance_sufficient(
+                    base_asset,
+                    quote_asset,
+                    base_asset_funds,
+                    quote_asset_funds
+                )   
                 
             
             

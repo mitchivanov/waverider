@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { botService } from '../services/api';
-import { GridTradingParameters, AnotherTradingParameters, SellBotParameters } from '../types';
+import { GridTradingParameters, AnotherTradingParameters, SellBotParameters, IndexFundParameters } from '../types';
 import { GridBotForm } from './GridBotForm';
 import { SellBotForm } from './SellBotForm';
 import { useWebSocket } from '../services/WebSocketMaster';
+import { IndexFundBotForm } from './IndexFundBotForm';
 
 const defaultGridParams: GridTradingParameters = {
   type: 'grid',
@@ -45,14 +46,32 @@ const defaultSellBotParams: SellBotParameters = {
   testnet: true
 };
 
+const defaultIndexFundParams: IndexFundParameters = {
+  type: 'indexfund',
+  baseAsset: "BTC",
+  quoteAsset: "USDT",
+  asset_a_funds: 5000,
+  asset_b_funds: 0.05,
+  grids: 10,
+  deviation_threshold: 0.004,
+  growth_factor: 0.5,
+  use_granular_distribution: true,
+  trail_price: true,
+  only_profitable_trades: false,
+  index_deviation_threshold: 0.01,
+  api_key: '55euYhdLmx17qhTB1KhBSbrsS3A79bYU0C408VHMYsTTMcsyfSMboJ1d1uEWNLq3',
+  api_secret: '2zlWvVVQIrj5ZryMNCkt9KIqowlQQMdG0bcV4g4LAinOnF8lc7O3Udumn6rIAyLb',
+  testnet: true
+};
+
 interface BotControlProps {
   botId: number;
   onBotStarted: (newBotId: number) => void;
 }
 
 export const BotControl: React.FC<BotControlProps> = ({ botId, onBotStarted }) => {
-  const [botType, setBotType] = useState<'grid' | 'sellbot'>('grid');
-  const [params, setParams] = useState<GridTradingParameters | AnotherTradingParameters | SellBotParameters>(defaultGridParams);
+  const [botType, setBotType] = useState<'grid' | 'sellbot' | 'indexfund'>('grid');
+  const [params, setParams] = useState<GridTradingParameters | AnotherTradingParameters | SellBotParameters | IndexFundParameters>(defaultGridParams);
   const [isLoading, setIsLoading] = useState(false);
   const [isBotRunning, setIsBotRunning] = useState(false);
   const { lastMessage, subscribe, unsubscribe } = useWebSocket();
@@ -84,9 +103,14 @@ export const BotControl: React.FC<BotControlProps> = ({ botId, onBotStarted }) =
   };
 
   const handleBotTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newType = e.target.value as 'grid' | 'sellbot';
+    const newType = e.target.value as 'grid' | 'sellbot' | 'indexfund';
     setBotType(newType);
-    setParams(newType === 'grid' ? defaultGridParams : defaultSellBotParams);
+    setParams(
+      newType === 'grid' ? defaultGridParams : 
+      newType === 'sellbot' ? defaultSellBotParams :
+      newType === 'indexfund' ? defaultIndexFundParams :
+      defaultAnotherParams
+    );
   };
 
   const handleStart = async () => {
@@ -151,6 +175,7 @@ export const BotControl: React.FC<BotControlProps> = ({ botId, onBotStarted }) =
             >
               <option value="grid">Grid Trading Bot</option>
               <option value="sellbot">Sell Bot</option>
+              <option value="indexfund">Index Fund Bot</option>
             </select>
           </div>
 
@@ -198,9 +223,15 @@ export const BotControl: React.FC<BotControlProps> = ({ botId, onBotStarted }) =
               handleInputChange={handleInputChange}
               isBotRunning={isBotRunning}
             />
-          ) : (
+          ) : botType === 'sellbot' ? (
             <SellBotForm 
               params={params as SellBotParameters}
+              handleInputChange={handleInputChange}
+              isBotRunning={isBotRunning}
+            />
+          ) : (
+            <IndexFundBotForm 
+              params={params as IndexFundParameters}
               handleInputChange={handleInputChange}
               isBotRunning={isBotRunning}
             />

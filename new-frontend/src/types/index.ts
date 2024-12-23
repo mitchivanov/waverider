@@ -1,5 +1,5 @@
 export interface BaseTradingParameters {
-  type: 'grid' | 'another' | 'sellbot';
+  type: 'grid' | 'another' | 'sellbot' | 'indexfund';
   api_key: string;
   api_secret: string;
   testnet: boolean;
@@ -38,13 +38,31 @@ export interface SellBotParameters extends BaseTradingParameters {
   batch_size: number;
 }
 
+export interface IndexFundParameters extends BaseTradingParameters {
+  type: 'indexfund';
+  baseAsset: string;
+  quoteAsset: string;
+  asset_a_funds: number;
+  asset_b_funds: number;
+  grids: number;
+  deviation_threshold: number;
+  growth_factor: number;
+  use_granular_distribution: boolean;
+  trail_price: boolean;
+  only_profitable_trades: boolean;
+  index_deviation_threshold: number;
+  api_key: string;
+  api_secret: string;
+  testnet: boolean;
+}
+
 export interface AnotherTradingParameters extends BaseTradingParameters {
   type: 'another';
   parameter_x: number;
   parameter_y: number;
 }
 
-export type TradingParameters = GridTradingParameters | SellBotParameters | AnotherTradingParameters;
+export type TradingParameters = GridTradingParameters | SellBotParameters | IndexFundParameters | AnotherTradingParameters;
 
 export interface PriceData {
   time: string; // ISO format date

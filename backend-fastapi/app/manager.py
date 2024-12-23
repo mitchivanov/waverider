@@ -36,8 +36,27 @@ class TradingBotManager:
             parameters['bot_id'] = bot_id
             strategy_class = get_strategy_class(bot_type)
             
-            # Инициализируем параметры в зависимости от типа стратегии
-            if bot_type == 'grid':
+            if bot_type == 'indexfund':
+                logging.info(f"Запуск стратегии indexfund с параметрами: {parameters}")
+                strategy = strategy_class(
+                    bot_id=bot_id,
+                    symbol=parameters['symbol'],
+                    api_key=parameters['api_key'],
+                    api_secret=parameters['api_secret'],
+                    testnet=parameters.get('testnet', True),
+                    asset_a_funds=parameters['asset_a_funds'],
+                    asset_b_funds=parameters['asset_b_funds'],
+                    grids=parameters['grids'],
+                    deviation_threshold=parameters['deviation_threshold'],
+                    growth_factor=parameters['growth_factor'],
+                    use_granular_distribution=parameters['use_granular_distribution'],
+                    trail_price=parameters.get('trail_price', True),
+                    only_profitable_trades=parameters.get('only_profitable_trades', False),
+                    index_deviation_threshold=parameters['index_deviation_threshold']
+                )
+                asyncio.create_task(strategy.execute_index_fund_strategy())
+            
+            elif bot_type == 'grid':
                 logging.info(f"Запуск стратегии grid с параметрами: {parameters}")
                 strategy = strategy_class(
                     bot_id=bot_id,
