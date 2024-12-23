@@ -102,7 +102,7 @@ class IndexFundStrategy(GridStrategy):
             f"sell={self.sell_order_sizes[0]} per grid"
         )
 
-    async def execute_index_fund_strategy(self):
+    async def execute_strategy(self):
         """Execute the index fund strategy with continuous monitoring."""
         logging.info("Starting the index fund strategy execution.")
         

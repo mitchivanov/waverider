@@ -729,7 +729,7 @@ class GridStrategy(BaseStrategy):
                 await self.trades_logger.log(f"Error in check_sell_orders: {e}")
                 continue
 
-    async def execute_grid_strategy(self):
+    async def execute_strategy(self):
         """Execute the grid trading strategy with continuous monitoring."""
         logging.info("Starting the grid trading strategy execution.")
         
