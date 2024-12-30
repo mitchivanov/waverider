@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useWebSocket } from '../services/WebSocketMaster';
-import { BotStatus } from './BotStatus';
-import { TradeHistory } from './TradeHistory';
-import { ActiveOrders } from './ActiveOrders';
-import { OrderHistory } from './OrderHistory';
-import { PriceChart } from './PriceChart';
+import { BotStatus } from './bot_interface/BotStatus';
+import { TradeHistory } from './bot_interface/TradeHistory';
+import { ActiveOrders } from './bot_interface/ActiveOrders';
+import { OrderHistory } from './bot_interface/OrderHistory';
+import { PriceChart } from './bot_interface/PriceChart';
 import { useNotifications } from '../contexts/NotificationContext';
 
 interface BotDashboardProps {

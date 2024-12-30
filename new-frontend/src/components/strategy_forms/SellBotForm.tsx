@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
-import { SellBotParameters } from '../types';
-import { SearchableSelect } from './SearchableSelect';
+import { SellBotParameters } from '../../types';
+import { SearchableSelect } from '../SearchableSelect';
 
 interface SellBotFormProps {
   params: SellBotParameters;

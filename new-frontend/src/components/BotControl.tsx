@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { botService } from '../services/api';
 import { GridTradingParameters, AnotherTradingParameters, SellBotParameters, IndexFundParameters } from '../types';
-import { GridBotForm } from './GridBotForm';
-import { SellBotForm } from './SellBotForm';
+import { GridBotForm } from './strategy_forms/GridBotForm';
+import { SellBotForm } from './strategy_forms/SellBotForm';
 import { useWebSocket } from '../services/WebSocketMaster';
-import { IndexFundBotForm } from './IndexFundBotForm';
+import { IndexFundBotForm } from './strategy_forms/IndexFundBotForm';
 
 const defaultGridParams: GridTradingParameters = {
   type: 'grid',
@@ -54,11 +54,10 @@ const defaultIndexFundParams: IndexFundParameters = {
   asset_b_funds: 0.05,
   grids: 10,
   deviation_threshold: 0.004,
-  growth_factor: 0.5,
-  use_granular_distribution: true,
-  trail_price: true,
-  only_profitable_trades: false,
-  index_deviation_threshold: 0.01,
+  risk_agreement: true,
+  upper_risk_limit: 150000,
+  lower_risk_limit: 50000,
+
   api_key: '55euYhdLmx17qhTB1KhBSbrsS3A79bYU0C408VHMYsTTMcsyfSMboJ1d1uEWNLq3',
   api_secret: '2zlWvVVQIrj5ZryMNCkt9KIqowlQQMdG0bcV4g4LAinOnF8lc7O3Udumn6rIAyLb',
   testnet: true

@@ -400,6 +400,7 @@ class BinanceClient:
                     return orders
                 logging.error(f"Failed to get open orders: {await resp.text()}")
                 return []
+
         except Exception as e:
             logging.error(f"Error getting open orders: {str(e)}")
             return []

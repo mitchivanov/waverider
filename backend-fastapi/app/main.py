@@ -52,7 +52,9 @@ app.add_middleware(
     allow_origins=["http://localhost:3000",
                    "http://localhost:5173",
                    "http://185.41.161.201",
-                   "http://185.41.161.201:80"],
+                   "http://185.41.161.201:80",
+                   "http://localhost",
+                   ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
@@ -111,9 +113,7 @@ async def start_bot(params: dict):
                 # Проверяем наличие необходимых параметров для индексного фонда
                 required_params = [
                     'symbol', 'api_key', 'api_secret', 'asset_a_funds', 
-                    'asset_b_funds', 'grids', 'deviation_threshold',
-                    'growth_factor', 'use_granular_distribution',
-                    'index_deviation_threshold', 'baseAsset', 'quoteAsset'
+                    'asset_b_funds', 'grids', 'deviation_threshold', 'risk_agreement'
                 ]
                 
                 for param in required_params:
@@ -257,7 +257,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif msg_type == "trade_history":
                     task = asyncio.create_task(trade_history_service(bot_id))
                 elif msg_type == "candlestick_data":
-                    task = asyncio.create_task(candle_data_service(bot_id, websocket))
+                    task = asyncio.create_task(candle_data_service(websocket, bot_id))
                 else:
                     continue
 
@@ -417,7 +417,7 @@ async def bot_status_service(bot_id: int):
                     "unrealized_profit_b": parameters["unrealized_profit_b"],
                     "unrealized_profit_usdt": parameters["unrealized_profit_usdt"],
                         
-                    "initial_parameters": parameters["initial_parameters"],
+#                    "initial_parameters": parameters["initial_parameters"],
                 }   
                 
                 await manager.broadcast({
@@ -527,49 +527,66 @@ async def trade_history_service(bot_id: int):
                 await asyncio.sleep(5)
                 
 
-async def candle_data_service(bot_id: int, websocket: WebSocket):
-    async with async_session() as session:
-        try:
-            ws_logger.debug(f"candle_data_service: bot_id = {bot_id}")
-            
-            bot = await TradingBotManager.get_bot_by_id(bot_id)
-            interval = "1m"
-            
-            async def broadcast_kline(kline: dict):
-                message = {
-                    "type": "kline_data",
-                    "bot_id": bot_id,
-                    "symbol": bot.symbol,
-                    "data": kline
-                }
-                await manager.broadcast(message)
-            
-            if bot_id not in kline_managers:
-                kline_managers[bot_id] = KlineManager(symbol=bot.symbol, interval=interval)
-             
-            historical_klines = await kline_managers[bot_id].fetch_kline_data(limit=100)
-            if historical_klines:
-                historical_message = {
-                    "type": "historical_kline_data",
-                    "bot_id": bot_id,
-                    "symbol": bot.symbol,
-                    "data": historical_klines
-                }
-                await manager.broadcast(historical_message)
-                
-            last_candle_time = None
-            ohlc = {
-                "open": 0.0,
-                "high": 0.0,
-                "low": 0.0,
-                "close": 0.0,
-                "volume": 0.0
+async def candle_data_service(websocket: WebSocket, bot_id: int):
+    try:
+        bot = await TradingBotManager.get_bot_by_id(bot_id)
+        interval = "1m"
+        if not bot:
+            return
+        
+        async def broadcast_kline(kline: dict):
+            message = {
+                "type": "kline_data",
+                "bot_id": bot_id,
+                "symbol": bot.symbol,
+                "data": kline
             }
-            candle_interval = 15
+            await manager.broadcast(message)
             
-            while True:
+        if bot_id not in kline_managers:
+            kline_managers[bot_id] = KlineManager(symbol=bot.symbol, interval=interval)
+             
+        historical_klines = await kline_managers[bot_id].fetch_kline_data(limit=100)
+        if historical_klines:
+            historical_message = {
+                "type": "historical_kline_data",
+                "bot_id": bot_id,
+                "symbol": bot.symbol,
+                "data": historical_klines
+            }
+        await manager.broadcast(historical_message)
+            
+        interval = "1m"  # Значение по умолчанию
+        last_candle_time = None
+        ohlc = {
+            "open": 0.0,
+            "high": 0.0,
+            "low": 0.0,
+            "close": 0.0,
+            "volume": 0.0
+        }
+        candle_interval = 15
+        
+        # Создаем очередь для сообщений
+        message_queue = asyncio.Queue()
+        
+        # Отдельная корутина для получения сообщений
+        async def message_receiver():
+            try:
+                while True:
+                    message = await websocket.receive_json()
+                    await message_queue.put(message)
+            except Exception as e:
+                ws_logger.error(f"Error in message receiver: {e}")
+                
+        # Запускаем получение сообщений в отдельной задаче
+        receiver_task = asyncio.create_task(message_receiver())
+        
+        while True:
+            try:
+                # Проверяем очередь сообщений без блокировки
                 try:
-                    subscription_message = await websocket.receive_json()
+                    subscription_message = await asyncio.wait_for(message_queue.get(), timeout=0.1)
                     if subscription_message.get("type") == "change_interval":
                         new_interval = subscription_message.get("interval")
                         if new_interval and new_interval != interval:
@@ -592,54 +609,69 @@ async def candle_data_service(bot_id: int, websocket: WebSocket):
                                 await manager.broadcast(historical_message)
                             
                         ws_logger.info(f"Интервал изменен на {interval} для бота {bot_id}")
-                        
-                    parameters = await TradingBotManager.get_current_parameters(bot_id)
-                    if parameters is None:
-                        await asyncio.sleep(1)
-                        continue
+                except asyncio.TimeoutError:
+                    pass  # Нет новых сообщений
                     
-                    current_timestamp = int(datetime.datetime.utcnow().timestamp())
-                    candle_time = current_timestamp - (current_timestamp % candle_interval)
-                    
-                    if candle_time > last_candle_time:
-                        candle_data = {
-                            "type": "candlestick_update",
-                            "bot_id": bot_id,
-                            "data": {
-                                "time": last_candle_time,
-                                "open": ohlc["open"],
-                                "high": ohlc["high"],
-                                "low": ohlc["low"],
-                                "close": ohlc["close"],
-                                "volume": ohlc["volume"]
-                            }
+                parameters = await TradingBotManager.get_current_parameters(bot_id)
+                if parameters is None:
+                    await asyncio.sleep(1)
+                    continue
+                
+                current_timestamp = int(datetime.datetime.utcnow().timestamp())
+                candle_time = current_timestamp - (current_timestamp % candle_interval)
+                
+                if last_candle_time is None:
+                    last_candle_time = candle_time
+                    ohlc = {
+                        "open": parameters["current_price"],
+                        "high": parameters["current_price"],
+                        "low": parameters["current_price"],
+                        "close": parameters["current_price"],
+                        "volume": 0.0
+                    }
+                
+                if candle_time > last_candle_time:
+                    candle_data = {
+                        "type": "candlestick_update",
+                        "bot_id": bot_id,
+                        "data": {
+                            "time": last_candle_time * 1000,  # Переводим в миллисекунды
+                            "open": ohlc["open"],
+                            "high": ohlc["high"],
+                            "low": ohlc["low"],
+                            "close": ohlc["close"],
+                            "volume": ohlc["volume"]
                         }
-                        await manager.broadcast(candle_data)
-                        ws_logger.debug(f"Отправлено candle_data: {json.dumps(candle_data)}")
-                        
-                        # Сброс OHLV для новой свечи
-                        ohlc = {
-                            "open": parameters["current_price"],
-                            "high": parameters["current_price"],
-                            "low": parameters["current_price"],
-                            "close": parameters["current_price"],
-                            "volume": 0.0  # Добавьте реализацию объема, если необходимо
-                        }
-                        last_candle_time = candle_time
-                    else:
-                        # Обновление текущей свечи
-                        ohlc["close"] = parameters["current_price"]
-                        ohlc["high"] = max(ohlc["high"], parameters["current_price"])
-                        ohlc["low"] = min(ohlc["low"], parameters["current_price"])
-                        
-                except Exception as e:
-                    ws_logger.error(f"Ошибка при отправке candle_data_: {e}")
-                    await asyncio.sleep(5)
-
+                    }
+                    await manager.broadcast(candle_data)
                     
-        except Exception as e:
-            ws_logger.error(f"Ошибка при отправке candle_data_: {e}")
-            await asyncio.sleep(5)
+                    # Сброс OHLC для новой свечи
+                    ohlc = {
+                        "open": parameters["current_price"],
+                        "high": parameters["current_price"],
+                        "low": parameters["current_price"],
+                        "close": parameters["current_price"],
+                        "volume": 0.0
+                    }
+                    last_candle_time = candle_time
+                else:
+                    # Обновление текущей свечи
+                    current_price = parameters["current_price"]
+                    ohlc["close"] = current_price
+                    ohlc["high"] = max(ohlc["high"], current_price)
+                    ohlc["low"] = min(ohlc["low"], current_price)
+                
+                await asyncio.sleep(1)
+                
+            except Exception as e:
+                ws_logger.error(f"Error in candle processing: {e}")
+                await asyncio.sleep(5)
+                
+    except Exception as e:
+        ws_logger.error(f"Fatal error in candle_data_service: {e}")
+    finally:
+        if 'receiver_task' in locals():
+            receiver_task.cancel()
 
 
 @app.post("/api/balance")

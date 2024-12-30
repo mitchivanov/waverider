@@ -1,5 +1,5 @@
 import React from 'react';
-import { IndexFundParameters } from '../types';
+import { IndexFundParameters } from '../../types';
 
 interface IndexFundBotFormProps {
   params: IndexFundParameters;
@@ -88,64 +88,44 @@ export const IndexFundBotForm: React.FC<IndexFundBotFormProps> = ({
       </div>
 
       <div className="form-group">
-        <label className="block text-gray-300 mb-2">Index Deviation Threshold:</label>
-        <input
-          type="number"
-          name="index_deviation_threshold"
-          value={params.index_deviation_threshold}
-          onChange={handleInputChange}
-          className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md"
-          disabled={isBotRunning}
-        />
-      </div>
-
-      <div className="form-group">
-        <label className="block text-gray-300 mb-2">Growth Factor:</label>
-        <input
-          type="number"
-          name="growth_factor"
-          value={params.growth_factor}
-          onChange={handleInputChange}
-          className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md"
-          disabled={isBotRunning}
-        />
-      </div>
-
-      <div className="form-group flex items-center space-x-2">
+        <label className="block text-gray-300 mb-2">Risk Agreement:</label>
         <input
           type="checkbox"
-          name="use_granular_distribution"
-          checked={params.use_granular_distribution}
+          name="risk_agreement"
+          checked={params.risk_agreement}
           onChange={handleInputChange}
           className="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded"
           disabled={isBotRunning}
         />
-        <label className="text-gray-300">Use Granular Distribution</label>
       </div>
 
-      <div className="form-group flex items-center space-x-2">
-        <input
-          type="checkbox"
-          name="trail_price"
-          checked={params.trail_price}
-          onChange={handleInputChange}
-          className="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded"
-          disabled={isBotRunning}
-        />
-        <label className="text-gray-300">Trail Price</label>
-      </div>
+      {params.risk_agreement && (
+        <>
+          <div className="form-group">
+            <label className="block text-gray-300 mb-2">Upper Risk Limit:</label>
+            <input
+              type="number"
+              name="upper_risk_limit"
+              value={params.upper_risk_limit || ''}
+              onChange={handleInputChange}
+              className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md"
+              disabled={isBotRunning}
+            />
+          </div>
 
-      <div className="form-group flex items-center space-x-2">
-        <input
-          type="checkbox"
-          name="only_profitable_trades"
-          checked={params.only_profitable_trades}
-          onChange={handleInputChange}
-          className="h-4 w-4 text-blue-600 bg-gray-700 border-gray-600 rounded"
-          disabled={isBotRunning}
-        />
-        <label className="text-gray-300">Only Profitable Trades</label>
-      </div>
+          <div className="form-group">
+            <label className="block text-gray-300 mb-2">Lower Risk Limit:</label>
+            <input
+              type="number"
+              name="lower_risk_limit"
+              value={params.lower_risk_limit || ''}
+              onChange={handleInputChange}
+              className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md"
+              disabled={isBotRunning}
+            />
+          </div>
+        </>
+      )}
     </>
   );
 };

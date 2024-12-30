@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useWebSocket } from '../services/WebSocketMaster';
-import { TradeHistory as TradeHistoryType, OrderHistory } from '../types';
+import { useWebSocket } from '../../services/WebSocketMaster';
+import { TradeHistory as TradeHistoryType, OrderHistory } from '../../types';
 import { TradeOrders } from './TradeOrders';
 
 interface TradeHistoryProps {

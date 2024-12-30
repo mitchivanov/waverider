@@ -48,13 +48,10 @@ class TradingBotManager:
                     asset_b_funds=parameters['asset_b_funds'],
                     grids=parameters['grids'],
                     deviation_threshold=parameters['deviation_threshold'],
-                    growth_factor=parameters['growth_factor'],
-                    use_granular_distribution=parameters['use_granular_distribution'],
-                    trail_price=parameters.get('trail_price', True),
-                    only_profitable_trades=parameters.get('only_profitable_trades', False),
-                    index_deviation_threshold=parameters['index_deviation_threshold']
+                    risk_agreement=parameters['risk_agreement'],
+                    upper_risk_limit=parameters.get('upper_risk_limit', None),
+                    lower_risk_limit=parameters.get('lower_risk_limit', None)
                 )
-                asyncio.create_task(strategy.execute_index_fund_strategy())
             
             elif bot_type == 'grid':
                 logging.info(f"Запуск стратегии grid с параметрами: {parameters}")

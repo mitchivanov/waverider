@@ -1,5 +1,5 @@
 import React from 'react';
-import { OrderHistory } from '../types';
+import { OrderHistory } from '../../types';
 
 interface TradeOrdersProps {
   orders: OrderHistory[];

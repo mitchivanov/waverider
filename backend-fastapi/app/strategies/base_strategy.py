@@ -16,8 +16,3 @@ class BaseStrategy(ABC):
         """Основной метод исполнения стратегии"""
         pass
     
-    @abstractmethod
-    async def stop_strategy(self):
-        """Метод остановки стратегии"""
-        pass
-    

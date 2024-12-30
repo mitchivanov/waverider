@@ -46,14 +46,9 @@ export interface IndexFundParameters extends BaseTradingParameters {
   asset_b_funds: number;
   grids: number;
   deviation_threshold: number;
-  growth_factor: number;
-  use_granular_distribution: boolean;
-  trail_price: boolean;
-  only_profitable_trades: boolean;
-  index_deviation_threshold: number;
-  api_key: string;
-  api_secret: string;
-  testnet: boolean;
+  risk_agreement: boolean;
+  upper_risk_limit?: number;
+  lower_risk_limit?: number;
 }
 
 export interface AnotherTradingParameters extends BaseTradingParameters {

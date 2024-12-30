@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { GridTradingParameters } from '../types';
-import { binanceService } from '../services/binanceService';
-import { SearchableSelect } from './SearchableSelect';
+import { GridTradingParameters } from '../../types';
+import { binanceService } from '../../services/binanceService';
+import { SearchableSelect } from '../SearchableSelect';
 
 interface GridBotFormProps {
   params: GridTradingParameters;

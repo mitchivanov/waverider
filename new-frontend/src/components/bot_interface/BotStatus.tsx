@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useWebSocket } from '../services/WebSocketMaster';
-import { BotStatus as BotStatusType } from '../types';
+import { useWebSocket } from '../../services/WebSocketMaster';
+import { BotStatus as BotStatusType } from '../../types';
 
 interface BotStatusProps {
   botId: number;
